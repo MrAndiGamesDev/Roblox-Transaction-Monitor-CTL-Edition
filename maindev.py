@@ -50,21 +50,19 @@ class Colors:
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Censoring Utility
-# ─────────────────────────────────────────────────────────────────────────────
-def censor(text: str, *, show_start: int = 20, show_end: int = 10) -> str:
-    if not text:
-        return ""
-    if len(text) <= show_start + show_end:
-        return "*" * len(text)
-    return f"{text[:show_start]}{'*' * show_end}"
+class hide_info:
+    def censor(text: str, *, show_start: int = 20, show_end: int = 10) -> str:
+        if not text:
+            return ""
+        if len(text) <= show_start + show_end:
+            return "*" * len(text)
+        return f"{text[:show_start]}{'*' * show_end}"
 
-def censor_webhook(url: str) -> str:
-    return censor(url, show_start=20, show_end=10) if url else ""
+    def censor_webhook(url: str) -> str:
+        return censor(url, show_start=20, show_end=10) if url else ""
 
-def censor_cookie(cookie: str) -> str:
-    return censor(cookie, show_start=30, show_end=10) if cookie else ""
+    def censor_cookie(cookie: str) -> str:
+        return censor(cookie, show_start=30, show_end=10) if cookie else ""
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Utilities
@@ -125,6 +123,7 @@ class UpdateManager:
 class Config:
     def __init__(self):
         self._make_dirs()
+        self._hide_info = hide_info()
         self.data = DEFAULT_CONFIG.copy()
         self._load()
 
@@ -156,8 +155,8 @@ class Config:
     def show_summary(self):
         print(f"{Colors.CYAN}Config Summary:{Colors.RESET}")
         items = [
-            ("Webhook", censor_webhook(self['DISCORD_WEBHOOK_URL'])),
-            ("Cookie", censor_cookie(self['ROBLOSECURITY'])),
+            ("Webhook", self._hide_info.censor_webhook(self['DISCORD_WEBHOOK_URL'])),
+            ("Cookie", self._hide_info.censor_cookie(self['ROBLOSECURITY'])),
             ("Emoji", f"{self['DISCORD_EMOJI_NAME']}:{self['DISCORD_EMOJI_ID']}"),
             ("Interval", f"{self['CHECK_INTERVAL']}s"),
             ("Timeframe", self['TOTAL_CHECKS_TYPE'])
@@ -256,7 +255,7 @@ class DiscordNotifier:
     def __init__(self, url: str, emoji_name: str, emoji_id: str):
         self.url = url
         self.emoji = f"<:{emoji_name}:{emoji_id}>"
-        
+
     def send(self, embed: dict):
         if not self.url or "discord.com" not in self.url:
             return
@@ -275,7 +274,7 @@ class DiscordNotifier:
             "title": "Roblox Transaction Updated",
             "color": 0x00ff00,
             "fields": fields,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
     def robux_change(self, old: int, new: int):
