@@ -10,7 +10,7 @@ import signal
 import threading
 import requests
 from datetime import datetime, timezone
-from getpass import getpass  # <-- Hides input
+from getpass import getpass # <-- Hides input
 from typing import Dict, Any, Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ class Configuration:
     APP_DIR = os.path.join(os.path.expanduser("~"), ".roblox_transaction_history")
     CONFIG_FILE = os.path.join(APP_DIR, "config.json")
     STORAGE_DIR = os.path.join(APP_DIR, "transaction_info")
-
+    _LAST_CALL = 0
     DEFAULT_CONFIG = {
         "DISCORD_WEBHOOK_URL": "",
         "ROBLOSECURITY": "",
@@ -35,7 +35,7 @@ APP_DIR = Configuration.APP_DIR
 CONFIG_FILE = Configuration.CONFIG_FILE
 STORAGE_DIR = Configuration.STORAGE_DIR
 DEFAULT_CONFIG = Configuration.DEFAULT_CONFIG
-_last_call = 0
+_last_call = Configuration._LAST_CALL
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Terminal Colors
@@ -85,21 +85,52 @@ def abbreviate_number(num: int) -> str:
             return f"{num/limit:.2f}{suffix}"
     return str(num)
 
-def safe_write(path: str, data: dict):
+def safe_write(path: str, data: Dict):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
+
+class UpdateManager:
+    def __init__(self):
+        self.repoownername = "MrAndiGamesDev"
+        self.repo = f"{self.repoownername}/Roblox-Transaction-Monitor-CTL-Edition"
+        self.url = f"https://api.github.com/repos/{self.repo}/releases/latest"
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    #  Update Checker
+    # ─────────────────────────────────────────────────────────────────────────────
+    def check_for_update(self):
+        try:
+            r = requests.get(self.url, timeout=5)
+            if r.status_code == 200:
+                latest = r.json()
+                latest_tag = latest.get("tag_name", "")
+                try:
+                    # Read current version from a file named VERSION in the same directory
+                    with open(os.path.join(os.path.dirname(__file__), "VERSION")) as vf:
+                        current_tag = vf.read().strip()
+                except FileNotFoundError:
+                    current_tag = "v1.0.0"
+                if latest_tag and latest_tag != current_tag:
+                    print(f"{Colors.YELLOW}Update available: {latest_tag} (you have {current_tag}){Colors.RESET}")
+                    print(f"{Colors.CYAN}Download: {latest.get('html_url', '')}{Colors.RESET}\n")
+                return current_tag
+        except Exception:
+            pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Config Manager
 # ─────────────────────────────────────────────────────────────────────────────
 class Config:
     def __init__(self):
-        os.makedirs(APP_DIR, exist_ok=True, mode=0o700)
-        os.makedirs(STORAGE_DIR, exist_ok=True)
+        self._make_dirs()
         self.data = DEFAULT_CONFIG.copy()
         self._load()
+
+    def _make_dirs(self):
+        os.makedirs(APP_DIR, exist_ok=True, mode=0o700)
+        os.makedirs(STORAGE_DIR, exist_ok=True)
 
     def _load(self):
         if os.path.exists(CONFIG_FILE):
@@ -115,16 +146,25 @@ class Config:
     def save(self):
         safe_write(CONFIG_FILE, self.data)
 
-    def __getitem__(self, key): return self.data[key]
-    def __setitem__(self, key, value): self.data[key] = value; self.save()
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __setitem__(self, key, value):
+        self.data[key] = value
+        self.save()
 
     def show_summary(self):
         print(f"{Colors.CYAN}Config Summary:{Colors.RESET}")
-        print(f"  Webhook: {censor_webhook(self['DISCORD_WEBHOOK_URL'])}")
-        print(f"  Cookie:  {censor_cookie(self['ROBLOSECURITY'])}")
-        print(f"  Emoji:   {self['DISCORD_EMOJI_NAME']}:{self['DISCORD_EMOJI_ID']}")
-        print(f"  Interval: {self['CHECK_INTERVAL']}s")
-        print(f"  Timeframe: {self['TOTAL_CHECKS_TYPE']}\n")
+        items = [
+            ("Webhook", censor_webhook(self['DISCORD_WEBHOOK_URL'])),
+            ("Cookie", censor_cookie(self['ROBLOSECURITY'])),
+            ("Emoji", f"{self['DISCORD_EMOJI_NAME']}:{self['DISCORD_EMOJI_ID']}"),
+            ("Interval", f"{self['CHECK_INTERVAL']}s"),
+            ("Timeframe", self['TOTAL_CHECKS_TYPE'])
+        ]
+        for label, value in items:
+            print(f"  {label}: {value}")
+        print()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Storage
@@ -216,7 +256,7 @@ class DiscordNotifier:
     def __init__(self, url: str, emoji_name: str, emoji_id: str):
         self.url = url
         self.emoji = f"<:{emoji_name}:{emoji_id}>"
-
+        
     def send(self, embed: dict):
         if not self.url or "discord.com" not in self.url:
             return
@@ -309,14 +349,11 @@ class Monitor:
                 if not self._check_api():
                     self._wait()
                     continue
-
                 self._check_transactions()
                 self._check_robux()
                 self._check_account_status()
-
             except Exception as e:
                 print(f"{Colors.RED}Error: {e}{Colors.RESET}")
-
             self._wait()
 
     def _check_api(self) -> bool:
@@ -380,52 +417,80 @@ class Monitor:
         print()
 
     def _signal_handler(self, signum, frame):
-        print(f"\n{Colors.YELLOW}Shutting down gracefully...{Colors.RESET}")
+        print(f"\n{Colors.YELLOW}Shutting down gracefully... (signal {signum}){Colors.RESET}")
         self.stop_event.set()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Setup Wizard (First Run) – ALL INPUTS HIDDEN
 # ─────────────────────────────────────────────────────────────────────────────
-def setup_wizard():
-    print(f"{Colors.BOLD}{Colors.CYAN}Roblox Monitor CLI - First Time Setup{Colors.RESET}\n")
-    print("Enter the following details (some input is hidden for security):\n")
+class Setup_Wizard:
+    def __init__(self) -> None:
+        self.config = Config()
+        self.update_manager = UpdateManager()
 
-    webhook = getpass(f"{Colors.YELLOW}Discord Webhook URL (Hidden):{Colors.RESET} ").strip()
-    cookie = getpass(f"{Colors.YELLOW}.ROBLOSECURITY Cookie (Hidden):{Colors.RESET} ").strip()
-    emoji_id = input(f"{Colors.YELLOW}Emoji ID (Hidden):{Colors.RESET} ").strip()
-    emoji_name = input(f"{Colors.YELLOW}Emoji Name:{Colors.RESET} ").strip()
-    interval = input(f"{Colors.YELLOW}Check Interval (seconds, default: 60):{Colors.RESET} ").strip() or "60"
-    timeframe = input(f"{Colors.YELLOW}Timeframe (Day/Week/Month/Year, default: Day):{Colors.RESET} ").strip() or "Day"
+    # ─────────────────────────────────────────────────────────────────────────────
+    #  Wizard
+    # ─────────────────────────────────────────────────────────────────────────────
+    def wizard(self):
+        try:
+            print(f"{Colors.BOLD}{Colors.CYAN}Roblox Monitor CLI - First Time Setup{Colors.RESET}\n")
+            print("Enter the following details (some input is hidden for security):\n")
+            prompts = [
+                ("Discord Webhook URL (Hidden):", getpass),
+                (".ROBLOSECURITY Cookie (Hidden):", getpass),
+                ("Emoji ID:", input),
+                ("Emoji Name:", input),
+                ("Check Interval (seconds, default: 60):", input),
+                ("Timeframe (Day/Week/Month/Year, default: Day):", input)
+            ]
+            defaults = ["", "", "", "", "60", "Day"]
+            responses = []
+            for (prompt, reader), default in zip(prompts, defaults):
+                value = reader(f"{Colors.YELLOW}{prompt}{Colors.RESET} ").strip()
+                responses.append(value if value else default)
+            webhook, cookie, emoji_id, emoji_name, interval, timeframe = responses
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n{Colors.RED}Setup interrupted by user.{Colors.RESET}")
+            raise SystemExit(1)
+        except Exception as e:
+            print(f"{Colors.RED}Unexpected error during input: {e}{Colors.RESET}")
+            raise SystemExit(1)
+            
+        try:
+            if webhook: self.config["DISCORD_WEBHOOK_URL"] = webhook
+            if cookie: self.config["ROBLOSECURITY"] = cookie
+            if emoji_id: self.config["DISCORD_EMOJI_ID"] = emoji_id
+            if emoji_name: self.config["DISCORD_EMOJI_NAME"] = emoji_name
+            if interval: self.config["CHECK_INTERVAL"] = interval
+            if timeframe: self.config["TOTAL_CHECKS_TYPE"] = timeframe
+        except Exception as e:
+            print(f"{Colors.RED}Failed to save configuration: {e}{Colors.RESET}")
+            raise SystemExit(1)
+        print(f"\n{Colors.GREEN}Config saved securely to {CONFIG_FILE}{Colors.RESET}")
 
-    config = Config()
-    if webhook: config["DISCORD_WEBHOOK_URL"] = webhook
-    if cookie: config["ROBLOSECURITY"] = cookie
-    if emoji_id: config["DISCORD_EMOJI_ID"] = emoji_id
-    if emoji_name: config["DISCORD_EMOJI_NAME"] = emoji_name
-    if interval: config["CHECK_INTERVAL"] = interval
-    if timeframe: config["TOTAL_CHECKS_TYPE"] = timeframe
-
-    print(f"\n{Colors.GREEN}Config saved securely to {CONFIG_FILE}{Colors.RESET}")
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────────────────────────────────────
-def main():
-    config = Config()
-
-    # First run?
-    if not config["ROBLOSECURITY"]:
-        setup_wizard()
-        print(f"\n{Colors.CYAN}Edit config later: {CONFIG_FILE}{Colors.RESET}\n")
-        return
-
-    # Validate cookie format
-    if not config["ROBLOSECURITY"].startswith("_|WARNING"):
-        print(f"{Colors.RED}Invalid .ROBLOSECURITY cookie format. Must start with '_|WARNING' {Colors.RESET}")
-        return
-
-    monitor = Monitor()
-    monitor.start()
+    # ─────────────────────────────────────────────────────────────────────────────
+    #  Start
+    # ─────────────────────────────────────────────────────────────────────────────
+    def run(self):
+        self.update_manager.check_for_update()
+        try:
+            # First run?
+            if not self.config["ROBLOSECURITY"]:
+                self.wizard()
+                print(f"\n{Colors.CYAN}Edit config later: {CONFIG_FILE}{Colors.RESET}\n")
+                return
+            # Validate cookie format
+            if not self.config["ROBLOSECURITY"].startswith("_|WARNING"):
+                print(f"{Colors.RED}Invalid .ROBLOSECURITY cookie format. Must start with '_|WARNING'{Colors.RESET}")
+                return
+            monitor = Monitor()
+            monitor.start()
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}Setup aborted by user.{Colors.RESET}")
+        except Exception as e:
+            print(f"{Colors.RED}Fatal error in start: {e}{Colors.RESET}")
+            raise SystemExit(1)
 
 if __name__ == "__main__":
-    main()
+    Setup = Setup_Wizard()
+    Setup.run()
