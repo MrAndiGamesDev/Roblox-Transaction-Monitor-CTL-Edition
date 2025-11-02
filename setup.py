@@ -87,6 +87,9 @@ class PyInstallerBuilder:
     def _get_icon_path(self) -> str:
         return "Robux.ico"
 
+    def _collect_submodules(self) -> str:
+        return "Roblox-Transaction-Monitor/"
+
     def _build_pyinstaller_args(self) -> List[str]:
         return [
             str(self.script_file),
@@ -99,7 +102,7 @@ class PyInstallerBuilder:
             f"--optimize={self.config.optimization_lvl}",
             f"--add-data={self._get_icon_path()};.",
             f"--add-data=VERSION;.",
-            "--collect-submodules=Roblox-Transaction-Monitor/",
+            f"--collect-submodules={self._collect_submodules()}",
             "--log-level=WARN",
         ]
 
@@ -234,7 +237,7 @@ class PyInstallerBuilder:
             self.logger.Log("error", f"Build process failed: {exc}")
             self._exit_script(cleanup_delay)
 
-class AddArguments:
+class Launcher:
     def _parse_cli(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(
             description="Build an executable from a Python script using PyInstaller."
@@ -268,5 +271,5 @@ class AddArguments:
         builder.run()
 
 if __name__ == "__main__":
-    AddArgs = AddArguments()
+    AddArgs = Launcher()
     AddArgs.build_executable()

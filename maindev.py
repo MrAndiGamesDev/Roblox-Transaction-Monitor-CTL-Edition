@@ -10,7 +10,7 @@ import signal
 import threading
 import requests
 from datetime import datetime, timezone
-from getpass import getpass  # <-- Hides input
+from getpass import getpass # <-- Hides input
 from typing import Dict, Any, Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -20,9 +20,7 @@ class Configuration:
     APP_DIR = os.path.join(os.path.expanduser("~"), ".roblox_transaction_history")
     CONFIG_FILE = os.path.join(APP_DIR, "config.json")
     STORAGE_DIR = os.path.join(APP_DIR, "transaction_info")
-
     _LAST_CALL = 0
-
     DEFAULT_CONFIG = {
         "DISCORD_WEBHOOK_URL": "",
         "ROBLOSECURITY": "",
@@ -87,35 +85,39 @@ def abbreviate_number(num: int) -> str:
             return f"{num/limit:.2f}{suffix}"
     return str(num)
 
-def safe_write(path: str, data: dict):
+def safe_write(path: str, data: Dict):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Update Checker
-# ─────────────────────────────────────────────────────────────────────────────
-def check_for_update():
-    try:
-        repoownername = "MrAndiGamesDev"
-        repo = f"{repoownername}/Roblox-Transaction-Monitor-CTL-Edition"
-        url = f"https://api.github.com/repos/{repo}/releases/latest"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            latest = r.json()
-            latest_tag = latest.get("tag_name", "")
-            # Read current version from a file named VERSION in the same directory
-            try:
-                with open(os.path.join(os.path.dirname(__file__), "VERSION")) as vf:
-                    current_tag = vf.read().strip()
-            except FileNotFoundError:
-                current_tag = "v1.0.0"
-            if latest_tag and latest_tag != current_tag:
-                print(f"{Colors.YELLOW}Update available: {latest_tag} (you have {current_tag}){Colors.RESET}")
-                print(f"{Colors.CYAN}Download: {latest.get('html_url', '')}{Colors.RESET}\n")
-    except Exception:
-        pass
+class UpdateManager:
+    def __init__(self):
+        self.repoownername = "MrAndiGamesDev"
+        self.repo = f"{self.repoownername}/Roblox-Transaction-Monitor-CTL-Edition"
+        self.url = f"https://api.github.com/repos/{self.repo}/releases/latest"
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    #  Update Checker
+    # ─────────────────────────────────────────────────────────────────────────────
+    def check_for_update(self):
+        try:
+            r = requests.get(self.url, timeout=5)
+            if r.status_code == 200:
+                latest = r.json()
+                latest_tag = latest.get("tag_name", "")
+                try:
+                    # Read current version from a file named VERSION in the same directory
+                    with open(os.path.join(os.path.dirname(__file__), "VERSION")) as vf:
+                        current_tag = vf.read().strip()
+                except FileNotFoundError:
+                    current_tag = "v1.0.0"
+                if latest_tag and latest_tag != current_tag:
+                    print(f"{Colors.YELLOW}Update available: {latest_tag} (you have {current_tag}){Colors.RESET}")
+                    print(f"{Colors.CYAN}Download: {latest.get('html_url', '')}{Colors.RESET}\n")
+                return current_tag
+        except Exception:
+            pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Config Manager
@@ -254,7 +256,7 @@ class DiscordNotifier:
     def __init__(self, url: str, emoji_name: str, emoji_id: str):
         self.url = url
         self.emoji = f"<:{emoji_name}:{emoji_id}>"
-
+        
     def send(self, embed: dict):
         if not self.url or "discord.com" not in self.url:
             return
@@ -424,6 +426,7 @@ class Monitor:
 class Setup_Wizard:
     def __init__(self) -> None:
         self.config = Config()
+        self.update_manager = UpdateManager()
 
     # ─────────────────────────────────────────────────────────────────────────────
     #  Wizard
@@ -468,8 +471,8 @@ class Setup_Wizard:
     # ─────────────────────────────────────────────────────────────────────────────
     #  Start
     # ─────────────────────────────────────────────────────────────────────────────
-    def start(self):
-        check_for_update()
+    def run(self):
+        self.update_manager.check_for_update()
         try:
             # First run?
             if not self.config["ROBLOSECURITY"]:
@@ -490,4 +493,4 @@ class Setup_Wizard:
 
 if __name__ == "__main__":
     Setup = Setup_Wizard()
-    Setup.start()
+    Setup.run()
