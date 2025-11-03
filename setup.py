@@ -94,7 +94,7 @@ class PyInstallerBuilder:
         return [
             str(self.script_file),
             "--noconfirm",
-            "--console",
+            "--noconsole",
             "--onefile",
             "--clean",
             f"--icon={self._get_icon_path()}",
