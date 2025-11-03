@@ -2,3 +2,5 @@ Roblox-Transaction-Monitor
 build
 dist
 *spec
+__pycache__
+.roblox_transaction_history

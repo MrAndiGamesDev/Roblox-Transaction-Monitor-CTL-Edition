@@ -1,72 +1,73 @@
 #!/usr/bin/env python3
-# ─────────────────────────────────────────────────────────────────────────────
-#  Roblox Transaction & Robux Monitor – CLI (Input Censoring)
-#  Author: MrAndiGamesDev (Refactored by AI Becuase i dont know much about python)
-# ─────────────────────────────────────────────────────────────────────────────
+# -*- coding: utf-8 -*-
+
+"""
+Roblox Transaction & Robux Monitor – GUI (PyQt5)
+Author: MrAndiGamesDev (Refactored by AI)
+"""
+
 import os
+import sys
 import json
 import time
-import signal
 import threading
 import requests
 from datetime import datetime, timezone
-from getpass import getpass # <-- Hides input
 from typing import Dict, Any, Optional
+from PyQt5 import QtCore, QtGui, QtWidgets
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Configuration
-# ─────────────────────────────────────────────────────────────────────────────
-class Configuration:
+# --------------------------------------------------------------------------- #
+# ──────────────────────────────── CONFIG ────────────────────────────────── #
+# --------------------------------------------------------------------------- #
+class Config:
     APP_DIR = os.path.join(os.path.expanduser("~"), ".roblox_transaction_history")
     CONFIG_FILE = os.path.join(APP_DIR, "config.json")
     STORAGE_DIR = os.path.join(APP_DIR, "transaction_info")
-    _LAST_CALL = 0
-    DEFAULT_CONFIG = {
+    DEFAULT = {
         "DISCORD_WEBHOOK_URL": "",
         "ROBLOSECURITY": "",
         "DISCORD_EMOJI_ID": "",
         "DISCORD_EMOJI_NAME": "",
-        "CHECK_INTERVAL": "60",
-        "TOTAL_CHECKS_TYPE": "Day"
+        "CHECK_INTERVAL": "180",
+        "TOTAL_CHECKS_TYPE": "Day",
+        "THEME": "System"
     }
 
-# Convenience aliases for backward compatibility
-APP_DIR = Configuration.APP_DIR
-CONFIG_FILE = Configuration.CONFIG_FILE
-STORAGE_DIR = Configuration.STORAGE_DIR
-DEFAULT_CONFIG = Configuration.DEFAULT_CONFIG
-_last_call = Configuration._LAST_CALL
+    def __init__(self):
+        os.makedirs(self.APP_DIR, exist_ok=True, mode=0o700)
+        os.makedirs(self.STORAGE_DIR, exist_ok=True)
+        self.data = self.DEFAULT.copy()
+        self._load()
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Terminal Colors
-# ─────────────────────────────────────────────────────────────────────────────
-class Colors:
-    GREEN = "\033[92m"
-    RED = "\033[91m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    CYAN = "\033[96m"
-    MAGENTA = "\033[95m"
-    BOLD = "\033[1m"
-    RESET = "\033[0m"
+    def _load(self):
+        if os.path.exists(self.CONFIG_FILE):
+            try:
+                with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                for k, v in self.DEFAULT.items():
+                    self.data[k] = loaded.get(k, v)
+            except Exception:
+                pass
+        self.save()
 
-class hide_info:
-    def censor(text: str, *, show_start: int = 20, show_end: int = 10) -> str:
-        if not text:
-            return ""
-        if len(text) <= show_start + show_end:
-            return "*" * len(text)
-        return f"{text[:show_start]}{'*' * show_end}"
+    def save(self):
+        tmp = self.CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.CONFIG_FILE)
 
-    def censor_webhook(url: str) -> str:
-        return censor(url, show_start=20, show_end=10) if url else ""
+    def __getitem__(self, key):
+        return self.data[key]
 
-    def censor_cookie(cookie: str) -> str:
-        return censor(cookie, show_start=30, show_end=10) if cookie else ""
+    def __setitem__(self, key, value):
+        self.data[key] = value
+        self.save()
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Utilities
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+# ──────────────────────────────── UTILITIES ─────────────────────────────── #
+# --------------------------------------------------------------------------- #
+_last_call = 0
+
 def rate_limited_request(*args, **kwargs):
     global _last_call
     now = time.time()
@@ -83,149 +84,80 @@ def abbreviate_number(num: int) -> str:
             return f"{num/limit:.2f}{suffix}"
     return str(num)
 
-def safe_write(path: str, data: Dict):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
-
-class UpdateManager:
-    def __init__(self):
-        self.repoownername = "MrAndiGamesDev"
-        self.repo = f"{self.repoownername}/Roblox-Transaction-Monitor-CTL-Edition"
-        self.url = f"https://api.github.com/repos/{self.repo}/releases/latest"
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  Update Checker
-    # ─────────────────────────────────────────────────────────────────────────────
-    def check_for_update(self):
-        try:
-            r = requests.get(self.url, timeout=5)
-            if r.status_code == 200:
-                latest = r.json()
-                latest_tag = latest.get("tag_name", "")
-                try:
-                    # Read current version from a file named VERSION in the same directory
-                    with open(os.path.join(os.path.dirname(__file__), "VERSION")) as vf:
-                        current_tag = vf.read().strip()
-                except FileNotFoundError:
-                    current_tag = "v1.0.0"
-                if latest_tag and latest_tag != current_tag:
-                    print(f"{Colors.YELLOW}Update available: {latest_tag} (you have {current_tag}){Colors.RESET}")
-                    print(f"{Colors.CYAN}Download: {latest.get('html_url', '')}{Colors.RESET}\n")
-                return current_tag
-        except Exception:
-            pass
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Config Manager
-# ─────────────────────────────────────────────────────────────────────────────
-class Config:
-    def __init__(self):
-        self._make_dirs()
-        self._hide_info = hide_info()
-        self.data = DEFAULT_CONFIG.copy()
-        self._load()
-
-    def _make_dirs(self):
-        os.makedirs(APP_DIR, exist_ok=True, mode=0o700)
-        os.makedirs(STORAGE_DIR, exist_ok=True)
-
-    def _load(self):
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE) as f:
-                    loaded = json.load(f)
-                for k, v in DEFAULT_CONFIG.items():
-                    self.data[k] = loaded.get(k, v)
-            except:
-                print(f"{Colors.YELLOW}Warning: Invalid config, using defaults.{Colors.RESET}")
-        self.save()
-
-    def save(self):
-        safe_write(CONFIG_FILE, self.data)
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __setitem__(self, key, value):
-        self.data[key] = value
-        self.save()
-
-    def show_summary(self):
-        print(f"{Colors.CYAN}Config Summary:{Colors.RESET}")
-        items = [
-            ("Webhook", self._hide_info.censor_webhook(self['DISCORD_WEBHOOK_URL'])),
-            ("Cookie", self._hide_info.censor_cookie(self['ROBLOSECURITY'])),
-            ("Emoji", f"{self['DISCORD_EMOJI_NAME']}:{self['DISCORD_EMOJI_ID']}"),
-            ("Interval", f"{self['CHECK_INTERVAL']}s"),
-            ("Timeframe", self['TOTAL_CHECKS_TYPE'])
-        ]
-        for label, value in items:
-            print(f"  {label}: {value}")
-        print()
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Storage
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+# ──────────────────────────────── STORAGE ────────────────────────────────── #
+# --------------------------------------------------------------------------- #
 class Storage:
     def __init__(self):
-        self.trans_file = os.path.join(STORAGE_DIR, "last_transaction_data.json")
-        self.robux_file = os.path.join(STORAGE_DIR, "last_robux.json")
+        self.trans_file = os.path.join(Config.STORAGE_DIR, "last_transaction_data.json")
+        self.robux_file = os.path.join(Config.STORAGE_DIR, "last_robux.json")
 
-    def load_transactions(self) -> dict:
+    def _default_transactions(self) -> Dict[str, int]:
+        keys = [
+            "salesTotal", "purchasesTotal", "affiliateSalesTotal", "groupPayoutsTotal",
+            "currencyPurchasesTotal", "premiumStipendsTotal", "tradeSystemEarningsTotal",
+            "tradeSystemCostsTotal", "premiumPayoutsTotal", "groupPremiumPayoutsTotal",
+            "adSpendTotal", "developerExchangeTotal", "pendingRobuxTotal", "incomingRobuxTotal",
+            "outgoingRobuxTotal", "individualToGroupTotal", "csAdjustmentTotal",
+            "adsRevsharePayoutsTotal", "groupAdsRevsharePayoutsTotal", "subscriptionsRevshareTotal",
+            "groupSubscriptionsRevshareTotal", "subscriptionsRevshareOutgoingTotal",
+            "groupSubscriptionsRevshareOutgoingTotal", "publishingAdvanceRebatesTotal",
+            "affiliatePayoutTotal"
+        ]
+        return {k: 0 for k in keys}
+
+    def load_transactions(self) -> Dict[str, int]:
         if not os.path.exists(self.trans_file):
-            default = {k: 0 for k in [
-                "salesTotal", "purchasesTotal", "affiliateSalesTotal", "groupPayoutsTotal",
-                "currencyPurchasesTotal", "premiumStipendsTotal", "tradeSystemEarningsTotal",
-                "tradeSystemCostsTotal", "premiumPayoutsTotal", "groupPremiumPayoutsTotal",
-                "adSpendTotal", "developerExchangeTotal", "pendingRobuxTotal", "incomingRobuxTotal",
-                "outgoingRobuxTotal", "individualToGroupTotal", "csAdjustmentTotal",
-                "adsRevsharePayoutsTotal", "groupAdsRevsharePayoutsTotal", "subscriptionsRevshareTotal",
-                "groupSubscriptionsRevshareTotal", "subscriptionsRevshareOutgoingTotal",
-                "groupSubscriptionsRevshareOutgoingTotal", "publishingAdvanceRebatesTotal",
-                "affiliatePayoutTotal"
-            ]}
+            default = self._default_transactions()
             self.save_transactions(default)
             return default
-        with open(self.trans_file) as f:
-            return json.load(f)
+        try:
+            with open(self.trans_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return self._default_transactions()
 
-    def save_transactions(self, data: dict):
-        safe_write(self.trans_file, data)
+    def save_transactions(self, data: Dict[str, int]):
+        tmp = self.trans_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, self.trans_file)
 
     def load_robux(self) -> int:
         if not os.path.exists(self.robux_file):
             return 0
         try:
-            with open(self.robux_file) as f:
+            with open(self.robux_file, "r", encoding="utf-8") as f:
                 return json.load(f).get("robux", 0)
-        except:
+        except Exception:
             return 0
 
     def save_robux(self, robux: int):
-        safe_write(self.robux_file, {"robux": robux})
+        tmp = self.robux_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"robux": robux}, f, indent=2)
+        os.replace(tmp, self.robux_file)
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Roblox API
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+# ────────────────────────────── ROBLOX API ─────────────────────────────── #
+# --------------------------------------------------------------------------- #
 class RobloxAPI:
     def __init__(self, cookie: str):
         self.cookies = {".ROBLOSECURITY": cookie}
-        self.user_id = None
+        self.user_id: Optional[int] = None
 
     def authenticate(self) -> bool:
         try:
-            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated", cookies=self.cookies, timeout=10)
+            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated",
+                                     cookies=self.cookies, timeout=10)
             if r.status_code == 200:
                 self.user_id = r.json().get("id")
-                print(f"{Colors.CYAN}Authenticated as user ID: {self.user_id}{Colors.RESET}")
                 return True
-        except Exception as e:
-            print(f"{Colors.RED}Auth failed: {e}{Colors.RESET}")
+        except Exception:
+            pass
         return False
 
-    def get_transaction_totals(self, timeframe: str) -> Optional[dict]:
+    def get_transaction_totals(self, timeframe: str) -> Optional[Dict[str, int]]:
         if not self.user_id: return None
         url = f"https://economy.roblox.com/v2/users/{self.user_id}/transaction-totals?timeFrame={timeframe}&transactionType=summary"
         r = rate_limited_request("GET", url, cookies=self.cookies, timeout=10)
@@ -233,12 +165,16 @@ class RobloxAPI:
 
     def get_robux(self) -> Optional[int]:
         if not self.user_id: return None
-        r = rate_limited_request("GET", f"https://economy.roblox.com/v1/users/{self.user_id}/currency", cookies=self.cookies, timeout=10)
+        r = rate_limited_request("GET",
+                                 f"https://economy.roblox.com/v1/users/{self.user_id}/currency",
+                                 cookies=self.cookies, timeout=10)
         return r.json().get("robux") if r.status_code == 200 else None
 
-    def get_account_status(self) -> Optional[dict]:
+    def get_account_status(self) -> Optional[Dict[str, Any]]:
         if not self.user_id: return None
-        r = rate_limited_request("GET", f"https://users.roblox.com/v1/users/{self.user_id}", cookies=self.cookies, timeout=10)
+        r = rate_limited_request("GET",
+                                 f"https://users.roblox.com/v1/users/{self.user_id}",
+                                 cookies=self.cookies, timeout=10)
         if r.status_code == 200:
             data = r.json()
             return {
@@ -248,51 +184,53 @@ class RobloxAPI:
             }
         return None
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Discord Notifier
-# ─────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+# ─────────────────────────── DISCORD NOTIFIER ──────────────────────────── #
+# --------------------------------------------------------------------------- #
 class DiscordNotifier:
     def __init__(self, url: str, emoji_name: str, emoji_id: str):
         self.url = url
-        self.emoji = f"<:{emoji_name}:{emoji_id}>"
+        self.emoji = f"<:{emoji_name}:{emoji_id}>" if emoji_name and emoji_id else "Robux"
 
-    def send(self, embed: dict):
+    def _send(self, embed: dict):
         if not self.url or "discord.com" not in self.url:
             return
         try:
             r = rate_limited_request("POST", self.url, json={"embeds": [embed]})
             r.raise_for_status()
-        except:
+        except Exception:
             pass
 
-    def transaction_change(self, changes: dict):
+    def transaction_change(self, changes: Dict[str, tuple]):
         fields = [
-            {"name": k, "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}", "inline": False}
+            {"name": k,
+             "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}",
+             "inline": False}
             for k, (old, new) in changes.items()
         ]
-        self.send({
-            "title": "Roblox Transaction Updated",
+        self._send({
+            "title": "Transaction Updated",
             "color": 0x00ff00,
             "fields": fields,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
     def robux_change(self, old: int, new: int):
-        self.send({
+        self._send({
             "title": "Robux Balance Changed",
             "color": 0x00ff00 if new > old else 0xff0000,
             "fields": [
                 {"name": "Before", "value": f"{self.emoji} {abbreviate_number(old)}", "inline": True},
-                {"name": "After", "value": f"{self.emoji} {abbreviate_number(new)}", "inline": True}
+                {"name": "After",  "value": f"{self.emoji} {abbreviate_number(new)}",  "inline": True}
             ],
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
-    def account_status(self, status: dict, previous: dict = None):
+    def account_status(self, status: dict, previous: Optional[dict] = None):
         if previous and previous == status:
             return
         color = 0xff0000 if status.get("is_banned") else 0x00ff00
-        self.send({
+        self._send({
             "title": f"Account {'BANNED' if status.get('is_banned') else 'ACTIVE'}",
             "description": "Status changed!",
             "color": color,
@@ -303,23 +241,81 @@ class DiscordNotifier:
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
-    def api_downtime(self, status: str, duration: float = None):
-        color = 0xff0000 if status == "STARTED" else 0x00ff00
-        fields = []
-        if duration:
-            fields.append({"name": "Duration", "value": f"{duration:.1f}s", "inline": False})
-        self.send({
-            "title": f"Roblox API {status}",
-            "color": color,
-            "fields": fields,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+    def api_downtime(self, status: str, duration: Optional[float] = None):
+        color = 0x00ff00 if status == "RECOVERED" else 0xff0000
+        title = "API Recovered" if status == "RECOVERED" else "API Down"
+        desc = f"Recovered after {duration:.1f}s" if duration else "Monitoring paused"
+        self._send({"title": title, "description": desc, "color": color, "timestamp": datetime.now(timezone.utc).isoformat()})
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Monitor
-# ─────────────────────────────────────────────────────────────────────────────
-class Monitor:
+# --------------------------------------------------------------------------- #
+# ────────────────────────────── SETUP WIZARD ────────────────────────────── #
+# --------------------------------------------------------------------------- #
+class SetupWizard(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("First Time Setup")
+        self.setModal(True)
+        self.config = Config()
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QtWidgets.QFormLayout(self)
+
+        self.webhook = QtWidgets.QLineEdit()
+        self.webhook.setEchoMode(QtWidgets.QLineEdit.Password)
+        layout.addRow("Discord Webhook URL:", self.webhook)
+
+        self.cookie = QtWidgets.QLineEdit()
+        self.cookie.setEchoMode(QtWidgets.QLineEdit.Password)
+        layout.addRow(".ROBLOSECURITY Cookie:", self.cookie)
+
+        self.emoji_id = QtWidgets.QLineEdit()
+        layout.addRow("Emoji ID:", self.emoji_id)
+
+        self.emoji_name = QtWidgets.QLineEdit()
+        layout.addRow("Emoji Name:", self.emoji_name)
+
+        self.interval = QtWidgets.QLineEdit("60")
+        layout.addRow("Check Interval (s):", self.interval)
+
+        self.timeframe = QtWidgets.QComboBox()
+        self.timeframe.addItems(["Day", "Week", "Month", "Year"])
+        layout.addRow("Timeframe:", self.timeframe)
+
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addRow(btn_box)
+
+    def accept(self):
+        try:
+            webhook = self.webhook.text().strip()
+            cookie = self.cookie.text().strip()
+            if webhook: self.config["DISCORD_WEBHOOK_URL"] = webhook
+            if cookie: self.config["ROBLOSECURITY"] = cookie
+            self.config["DISCORD_EMOJI_ID"] = self.emoji_id.text().strip()
+            self.config["DISCORD_EMOJI_NAME"] = self.emoji_name.text().strip()
+            self.config["CHECK_INTERVAL"] = self.interval.text().strip() or "60"
+            self.config["TOTAL_CHECKS_TYPE"] = self.timeframe.currentText()
+            super().accept()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save config:\n{e}")
+
+
+# --------------------------------------------------------------------------- #
+# ────────────────────────────── MAIN WINDOW ─────────────────────────────── #
+# --------------------------------------------------------------------------- #
+class MainWindow(QtWidgets.QMainWindow):
+    log_signal = QtCore.pyqtSignal(str, str)
+    update_label_signal = QtCore.pyqtSignal(object, str)
+
     def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Roblox Transaction & Robux Monitor")
+        self.resize(850, 620)
+
         self.config = Config()
         self.storage = Storage()
         self.api = RobloxAPI(self.config["ROBLOSECURITY"])
@@ -328,21 +324,294 @@ class Monitor:
             self.config["DISCORD_EMOJI_NAME"],
             self.config["DISCORD_EMOJI_ID"]
         )
+
         self.stop_event = threading.Event()
-        self.last_status = None
-        self.downtime_start = None
+        self.monitor_thread: Optional[threading.Thread] = None
+        self.last_status: Optional[Dict[str, Any]] = None
+        self.downtime_start: Optional[float] = None
 
-    def start(self):
-        print(f"{Colors.BOLD}{Colors.MAGENTA}Roblox Transaction & Robux Monitor (CLI){Colors.RESET}\n")
-        self.config.show_summary()
+        # Theme Actions
+        self.theme_group = QtWidgets.QActionGroup(self)
+        self.dark_action = QtWidgets.QAction("Dark", self, checkable=True)
+        self.light_action = QtWidgets.QAction("Light", self, checkable=True)
 
+        for act in (self.dark_action, self.light_action):
+            self.theme_group.addAction(act)
+        self.theme_group.triggered.connect(self.on_theme_changed)
+
+        self._build_ui()
+        self._connect_signals()
+        self.load_theme()
+        self.check_first_run()
+
+    def _connect_signals(self):
+        self.log_signal.connect(self._append_log)
+        self.update_label_signal.connect(lambda w, t: w.setText(t))
+
+    def _build_ui(self):
+        central = QtWidgets.QWidget()
+        self.setCentralWidget(central)
+        layout = QtWidgets.QVBoxLayout(central)
+
+        tabs = QtWidgets.QTabWidget()
+        layout.addWidget(tabs)
+
+        # Dashboard
+        dash = QtWidgets.QWidget()
+        dash_layout = QtWidgets.QGridLayout(dash)
+
+        self.lbl_user = QtWidgets.QLabel("User: -")
+        self.lbl_robux = QtWidgets.QLabel("Robux: -")
+        self.lbl_status = QtWidgets.QLabel("Status: -")
+        self.lbl_next = QtWidgets.QLabel("Next check: -")
+
+        for i, (label, widget) in enumerate([
+            ("<b>User:</b>", self.lbl_user),
+            ("<b>Robux:</b>", self.lbl_robux),
+            ("<b>Account:</b>", self.lbl_status),
+            ("<b>Next check:</b>", self.lbl_next)
+        ]):
+            dash_layout.addWidget(QtWidgets.QLabel(label), i, 0)
+            dash_layout.addWidget(widget, i, 1)
+
+        self.log_view = QtWidgets.QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setStyleSheet("font-family: Consolas; font-size: 10pt;")
+        dash_layout.addWidget(self.log_view, 4, 0, 1, 2)
+        tabs.addTab(dash, "Dashboard")
+
+        # Config
+        cfg = QtWidgets.QWidget()
+        cfg_layout = QtWidgets.QFormLayout(cfg)
+
+        self.cfg_webhook = QtWidgets.QLineEdit()
+        self.cfg_webhook.setEchoMode(QtWidgets.QLineEdit.Password)
+        cfg_layout.addRow("Webhook URL:", self.cfg_webhook)
+
+        self.cfg_cookie = QtWidgets.QLineEdit()
+        self.cfg_cookie.setEchoMode(QtWidgets.QLineEdit.Password)
+        cfg_layout.addRow(".ROBLOSECURITY:", self.cfg_cookie)
+
+        self.cfg_emoji_id = QtWidgets.QLineEdit()
+        cfg_layout.addRow("Emoji ID:", self.cfg_emoji_id)
+
+        self.cfg_emoji_name = QtWidgets.QLineEdit()
+        cfg_layout.addRow("Emoji Name:", self.cfg_emoji_name)
+
+        self.cfg_interval = QtWidgets.QLineEdit()
+        cfg_layout.addRow("Interval (s):", self.cfg_interval)
+
+        self.cfg_timeframe = QtWidgets.QComboBox()
+        self.cfg_timeframe.addItems(["Day", "Week", "Month", "Year"])
+        cfg_layout.addRow("Timeframe:", self.cfg_timeframe)
+
+        save_btn = QtWidgets.QPushButton("Save Config")
+        save_btn.clicked.connect(self.save_config)
+        cfg_layout.addRow(save_btn)
+
+        tabs.addTab(cfg, "Config")
+
+        # Menu
+        menu = self.menuBar()
+        file_menu = menu.addMenu("File")
+        file_menu.addAction("Exit", self.close)
+
+        view_menu = menu.addMenu("View")
+        theme_menu = view_menu.addMenu("Theme")
+        theme_menu.addAction(self.dark_action)
+        theme_menu.addAction(self.light_action)
+
+    def _append_log(self, msg: str, color: str = ""):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        html = f'<span style="color:{color}">{timestamp} {msg}</span>'
+        self.log_view.appendHtml(html)
+
+    def log(self, msg: str, color: str = ""):
+        self.log_signal.emit(msg, color)
+
+    def update_label(self, widget, text: str):
+        self.update_label_signal.emit(widget, text)
+
+    def load_theme(self):
+        theme = self.config.data.get("THEME", "System")
+        if theme == "Dark":
+            self.dark_action.setChecked(True)
+            self.apply_dark()
+        elif theme == "Light":
+            self.light_action.setChecked(True)
+            self.apply_light()
+
+    def on_theme_changed(self, action: QtWidgets.QAction):
+        if action == self.dark_action:
+            self.config["THEME"] = "Dark"
+            self.apply_dark()
+        elif action == self.light_action:
+            self.config["THEME"] = "Light"
+            self.apply_light()
+
+    def apply_dark(self):
+        self.setStyleSheet("""
+            QMainWindow, QDialog, QWidget { 
+                background-color: #1e1e1e; 
+                color: #ffffff; 
+            }
+            QLineEdit, QComboBox, QPlainTextEdit, QTabWidget::pane {
+                background-color: #2d2d2d; 
+                color: #ffffff; 
+                border: 1px solid #444; 
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #0078d7;
+            }
+            QPushButton {
+                background-color: #0078d7; 
+                color: white; 
+                border: none; 
+                padding: 6px 12px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+            QTabBar::tab {
+                background: #2d2d2d; 
+                color: #ccc; 
+                padding: 8px 16px; 
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background: #0078d7; 
+                color: white;
+            }
+            QTabWidget::pane { 
+                border-top: 2px solid #0078d7; 
+            }
+            QScrollBar:vertical {
+                background: #2d2d2d; 
+                width: 10px; 
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #555; 
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #777;
+            }
+        """)
+
+    def apply_light(self):
+        self.setStyleSheet("""
+            QMainWindow, QDialog, QWidget { 
+                background-color: #f3f3f3; 
+                color: #000000; 
+            }
+            QLineEdit, QComboBox, QPlainTextEdit, QTabWidget::pane {
+                background-color: #ffffff; 
+                color: #000000; 
+                border: 1px solid #ccc; 
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #0078d7;
+            }
+            QPushButton {
+                background-color: #0078d7; 
+                color: white; 
+                border: none; 
+                padding: 6px 12px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QTabBar::tab {
+                background: #e0e0e0; 
+                color: #333; 
+                padding: 8px 16px; 
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background: #0078d7; 
+                color: white;
+            }
+            QTabWidget::pane { 
+                border-top: 2px solid #0078d7; 
+            }
+        """)
+
+    def check_first_run(self):
+        if not self.config["ROBLOSECURITY"]:
+            wizard = SetupWizard(self)
+            if wizard.exec_() != QtWidgets.QDialog.Accepted:
+                QtWidgets.QMessageBox.information(self, "Info", "Setup cancelled – closing.")
+                sys.exit(0)
+            self.config = Config()
+            self.api = RobloxAPI(self.config["ROBLOSECURITY"])
+            self.notifier = DiscordNotifier(
+                self.config["DISCORD_WEBHOOK_URL"],
+                self.config["DISCORD_EMOJI_NAME"],
+                self.config["DISCORD_EMOJI_ID"]
+            )
+
+        # Validate cookie format with clear path
+        if not self.config["ROBLOSECURITY"].startswith("_|WARNING"):
+            config_path = Config.CONFIG_FILE
+            QtWidgets.QMessageBox.critical(
+                self, "Invalid Cookie Format",
+                f"<b>.ROBLOSECURITY cookie is invalid!</b><br><br>"
+                f"It must start with <code>_&#124;WARNING</code><br><br>"
+                f"<b>Current value:</b><br><code>{self.config['ROBLOSECURITY'][:50]}{'...' if len(self.config['ROBLOSECURITY']) > 50 else ''}</code><br><br>"
+                f"<b>Config file location:</b><br><code>{config_path}</code>"
+            )
+            sys.exit(1)
+
+        self.cfg_webhook.setText(self.config["DISCORD_WEBHOOK_URL"])
+        self.cfg_cookie.setText(self.config["ROBLOSECURITY"])
+        self.cfg_emoji_id.setText(self.config["DISCORD_EMOJI_ID"])
+        self.cfg_emoji_name.setText(self.config["DISCORD_EMOJI_NAME"])
+        self.cfg_interval.setText(self.config["CHECK_INTERVAL"])
+        self.cfg_timeframe.setCurrentText(self.config["TOTAL_CHECKS_TYPE"])
+
+        self.start_monitoring()
+
+    def save_config(self):
+        try:
+            self.config["DISCORD_WEBHOOK_URL"] = self.cfg_webhook.text().strip()
+            self.config["ROBLOSECURITY"] = self.cfg_cookie.text().strip()
+            self.config["DISCORD_EMOJI_ID"] = self.cfg_emoji_id.text().strip()
+            self.config["DISCORD_EMOJI_NAME"] = self.cfg_emoji_name.text().strip()
+            self.config["CHECK_INTERVAL"] = self.cfg_interval.text().strip() or "60"
+            self.config["TOTAL_CHECKS_TYPE"] = self.cfg_timeframe.currentText()
+
+            self.api = RobloxAPI(self.config["ROBLOSECURITY"])
+            self.notifier = DiscordNotifier(
+                self.config["DISCORD_WEBHOOK_URL"],
+                self.config["DISCORD_EMOJI_NAME"],
+                self.config["DISCORD_EMOJI_ID"]
+            )
+            self.log("Configuration saved.", "green")
+        except Exception as e:
+            self.log(f"Config save error: {e}", "red")
+
+    def start_monitoring(self):
         if not self.api.authenticate():
-            print(f"{Colors.RED}Cannot start: Invalid or expired .ROBLOSECURITY cookie.{Colors.RESET}")
+            self.log("Authentication failed – check cookie.", "red")
             return
 
-        print(f"{Colors.GREEN}Monitoring started. Press Ctrl+C to stop.{Colors.RESET}")
-        signal.signal(signal.SIGINT, self._signal_handler)
+        self.update_label(self.lbl_user, f"<b>{self.api.user_id}</b>")
+        self.log(f"Authenticated as user ID: {self.api.user_id}", "cyan")
 
+        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
+        self.monitor_thread.start()
+
+    def monitor_loop(self):
         while not self.stop_event.is_set():
             try:
                 if not self._check_api():
@@ -352,26 +621,27 @@ class Monitor:
                 self._check_robux()
                 self._check_account_status()
             except Exception as e:
-                print(f"{Colors.RED}Error: {e}{Colors.RESET}")
+                self.log(f"Unexpected error: {e}", "red")
             self._wait()
 
     def _check_api(self) -> bool:
         try:
-            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated", cookies=self.api.cookies, timeout=10)
+            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated",
+                                     cookies=self.api.cookies, timeout=10)
             if r.status_code == 200:
                 if self.downtime_start:
                     duration = time.time() - self.downtime_start
                     self.notifier.api_downtime("RECOVERED", duration)
-                    print(f"{Colors.GREEN}API recovered after {duration:.1f}s{Colors.RESET}")
+                    self.log(f"API recovered after {duration:.1f}s", "green")
                     self.downtime_start = None
                 return True
-        except:
+        except Exception:
             pass
 
         if not self.downtime_start:
             self.downtime_start = time.time()
             self.notifier.api_downtime("STARTED")
-            print(f"{Colors.RED}Roblox API unreachable. Retrying...{Colors.RESET}")
+            self.log("Roblox API unreachable – retrying...", "red")
         return False
 
     def _check_transactions(self):
@@ -380,9 +650,8 @@ class Monitor:
         last = self.storage.load_transactions()
         changes = {k: (last.get(k, 0), v) for k, v in data.items() if v != last.get(k, 0)}
         if changes:
-            print(f"{Colors.YELLOW}Transaction changes detected:{Colors.RESET}")
             for k, (o, n) in changes.items():
-                print(f"  {Colors.CYAN}{k}: {abbreviate_number(o)} to {abbreviate_number(n)}{Colors.RESET}")
+                self.log(f"{k}: {abbreviate_number(o)} to {abbreviate_number(n)}", "yellow")
             self.notifier.transaction_change(changes)
             self.storage.save_transactions(data)
 
@@ -392,7 +661,8 @@ class Monitor:
         last = self.storage.load_robux()
         if robux != last:
             change = "Increased" if robux > last else "Decreased"
-            print(f"{Colors.MAGENTA}Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}{Colors.RESET}")
+            self.log(f"Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}", "magenta")
+            self.update_label(self.lbl_robux, f"<b>{abbreviate_number(robux)}</b>")
             self.notifier.robux_change(last, robux)
             self.storage.save_robux(robux)
 
@@ -401,95 +671,34 @@ class Monitor:
         if not status: return
         if self.last_status != status:
             banned = status.get("is_banned", False)
-            print(f"{Colors.RED if banned else Colors.GREEN}Account {'BANNED' if banned else 'ACTIVE'}: {status['username']}{Colors.RESET}")
+            color = "red" if banned else "green"
+            self.log(f"Account {'BANNED' if banned else 'ACTIVE'}: {status['username']}", color)
+            self.update_label(self.lbl_status, f"<b>{'BANNED' if banned else 'ACTIVE'}</b>")
             self.notifier.account_status(status, self.last_status)
             self.last_status = status
 
     def _wait(self):
-        interval = max(10, int(self.config["CHECK_INTERVAL"] or 60))
+        interval = max(10, int(self.config["CHECK_INTERVAL"] or 180))
         for i in range(interval):
             if self.stop_event.is_set():
                 break
-            mins, secs = divmod(interval - i, 60)
-            print(f"\r{Colors.BLUE}Next check in {mins:02d}:{secs:02d}{Colors.RESET}", end="", flush=True)
+            mins, secs = divmod(interval - i, 180)
+            txt = f"Next check in {mins:02d}:{secs:02d}"
+            self.update_label(self.lbl_next, txt)
             time.sleep(1)
-        print()
 
-    def _signal_handler(self, signum, frame):
-        print(f"\n{Colors.YELLOW}Shutting down gracefully... (signal {signum}){Colors.RESET}")
+    def closeEvent(self, event: QtGui.QCloseEvent):
         self.stop_event.set()
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=2)
+        event.accept()
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Setup Wizard (First Run) – ALL INPUTS HIDDEN
-# ─────────────────────────────────────────────────────────────────────────────
-class Setup_Wizard:
-    def __init__(self) -> None:
-        self.config = Config()
-        self.update_manager = UpdateManager()
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  Wizard
-    # ─────────────────────────────────────────────────────────────────────────────
-    def wizard(self):
-        try:
-            print(f"{Colors.BOLD}{Colors.CYAN}Roblox Monitor CLI - First Time Setup{Colors.RESET}\n")
-            print("Enter the following details (some input is hidden for security):\n")
-            prompts = [
-                ("Discord Webhook URL (Hidden):", getpass),
-                (".ROBLOSECURITY Cookie (Hidden):", getpass),
-                ("Emoji ID:", input),
-                ("Emoji Name:", input),
-                ("Check Interval (seconds, default: 60):", input),
-                ("Timeframe (Day/Week/Month/Year, default: Day):", input)
-            ]
-            defaults = ["", "", "", "", "60", "Day"]
-            responses = []
-            for (prompt, reader), default in zip(prompts, defaults):
-                value = reader(f"{Colors.YELLOW}{prompt}{Colors.RESET} ").strip()
-                responses.append(value if value else default)
-            webhook, cookie, emoji_id, emoji_name, interval, timeframe = responses
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n{Colors.RED}Setup interrupted by user.{Colors.RESET}")
-            raise SystemExit(1)
-        except Exception as e:
-            print(f"{Colors.RED}Unexpected error during input: {e}{Colors.RESET}")
-            raise SystemExit(1)
-            
-        try:
-            if webhook: self.config["DISCORD_WEBHOOK_URL"] = webhook
-            if cookie: self.config["ROBLOSECURITY"] = cookie
-            if emoji_id: self.config["DISCORD_EMOJI_ID"] = emoji_id
-            if emoji_name: self.config["DISCORD_EMOJI_NAME"] = emoji_name
-            if interval: self.config["CHECK_INTERVAL"] = interval
-            if timeframe: self.config["TOTAL_CHECKS_TYPE"] = timeframe
-        except Exception as e:
-            print(f"{Colors.RED}Failed to save configuration: {e}{Colors.RESET}")
-            raise SystemExit(1)
-        print(f"\n{Colors.GREEN}Config saved securely to {CONFIG_FILE}{Colors.RESET}")
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  Start
-    # ─────────────────────────────────────────────────────────────────────────────
-    def run(self):
-        self.update_manager.check_for_update()
-        try:
-            # First run?
-            if not self.config["ROBLOSECURITY"]:
-                self.wizard()
-                print(f"\n{Colors.CYAN}Edit config later: {CONFIG_FILE}{Colors.RESET}\n")
-                return
-            # Validate cookie format
-            if not self.config["ROBLOSECURITY"].startswith("_|WARNING"):
-                print(f"{Colors.RED}Invalid .ROBLOSECURITY cookie format. Must start with '_|WARNING'{Colors.RESET}")
-                return
-            monitor = Monitor()
-            monitor.start()
-        except KeyboardInterrupt:
-            print(f"\n{Colors.YELLOW}Setup aborted by user.{Colors.RESET}")
-        except Exception as e:
-            print(f"{Colors.RED}Fatal error in start: {e}{Colors.RESET}")
-            raise SystemExit(1)
-
+# --------------------------------------------------------------------------- #
+# ────────────────────────────────── ENTRY ────────────────────────────────── #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    Setup = Setup_Wizard()
-    Setup.run()
+    app = QtWidgets.QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+    win = MainWindow()
+    win.show()
+    sys.exit(app.exec_())
