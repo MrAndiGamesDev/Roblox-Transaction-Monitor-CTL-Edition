@@ -4,4 +4,4 @@ psutil
 PyQt5>=5.15
 requests>=2.28
 pywin32
-clr
+ttkbootstrap
