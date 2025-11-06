@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Roblox Transaction & Robux Monitor – GUI (PyQt5)
-Author: MrAndiGamesDev (Refactored by AI + Trae-style Auto-Updater)
+Roblox Transaction & Robux Monitor – Native Windows UI (WinUI 3 via pythonnet)
+Author: MrAndiGamesDev (2025 WinUI 3 edition)
 """
 import os
 import sys
@@ -16,7 +16,6 @@ import subprocess
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
-from PyQt5 import QtCore, QtGui, QtWidgets
 
 # --------------------------------------------------------------------------- #
 # ──────────────────────────────── CONFIG ────────────────────────────────── #
@@ -32,7 +31,6 @@ class Config:
         "DISCORD_EMOJI_NAME": "",
         "CHECK_INTERVAL": "180",
         "TOTAL_CHECKS_TYPE": "Day",
-        "THEME": "System"
     }
 
     def __init__(self):
@@ -99,18 +97,16 @@ CURRENT_VERSION = "1.0.0"
 GITHUB_REPO = "MrAndiGamesDev/Roblox-Transaction-Monitor-CTL-Edition"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 ASSET_WINDOWS = "Roblox-Transaction-Monitor-CTL-Edition.exe"
-ASSET_LINUX = "Roblox-Transaction-Monitor-CTL-Edition"
 
 class AutoUpdater:
-    def __init__(self, parent: 'MainWindow'):
-        self.parent = parent
+    def __init__(self, log_func):
+        self.log = log_func
         self.current_version = self._get_current_version()
         self.download_url = None
         self.asset_name = None
         self.temp_path = None
 
     def _get_current_version(self) -> str:
-        """Read version from VERSION file or fall back to CURRENT_VERSION."""
         version_file = os.path.join(os.path.dirname(__file__), "VERSION")
         if os.path.exists(version_file):
             try:
@@ -124,12 +120,12 @@ class AutoUpdater:
         def run():
             try:
                 if manual:
-                    self.parent.log("Checking for updates...", "orange")
+                    self.log("Checking for updates...")
 
                 r = requests.get(GITHUB_API, timeout=10)
                 if r.status_code != 200:
                     if manual:
-                        self.parent.log("GitHub API unreachable.", "red")
+                        self.log("GitHub API unreachable.", "red")
                     return
 
                 data = r.json()
@@ -137,30 +133,21 @@ class AutoUpdater:
 
                 if self._compare_versions(latest, self.current_version) <= 0:
                     if manual:
-                        self.parent.log("You are up to date.", "green")
+                        self.log("You are up to date.", "green")
                     return
 
-                asset = None
-                for a in data["assets"]:
-                    name = a["name"]
-                    if sys.platform.startswith("win") and name == ASSET_WINDOWS:
-                        asset = a
-                        break
-                    elif sys.platform.startswith("linux") and name == ASSET_LINUX:
-                        asset = a
-                        break
-
+                asset = next((a for a in data["assets"] if a["name"] == ASSET_WINDOWS), None)
                 if not asset:
-                    self.parent.log("No compatible update found.", "red")
+                    self.log("No Windows update found.", "red")
                     return
 
                 self.download_url = asset["browser_download_url"]
                 self.asset_name = asset["name"]
-                self.parent.log(f"Update found: v{latest} ({self.asset_name})", "orange")
+                self.log(f"Update found: v{latest} ({self.asset_name})")
                 self._download_and_install()
             except Exception as e:
                 if manual:
-                    self.parent.log(f"Update check failed: {e}", "red")
+                    self.log(f"Update check failed: {e}", "red")
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -175,10 +162,10 @@ class AutoUpdater:
 
     def _download_and_install(self):
         try:
-            fd, self.temp_path = tempfile.mkstemp(suffix=os.path.splitext(self.asset_name)[1])
+            fd, self.temp_path = tempfile.mkstemp(suffix=".exe")
             os.close(fd)
 
-            self.parent.log("Downloading update...", "cyan")
+            self.log("Downloading update...")
             r = requests.get(self.download_url, stream=True, timeout=60)
             r.raise_for_status()
             total = int(r.headers.get('content-length', 0))
@@ -190,39 +177,32 @@ class AutoUpdater:
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        if total > 0:
+                        if total:
                             percent = int(100 * downloaded / total)
-                            self.parent.log(f"Downloading: {percent}%", "cyan")
+                            self.log(f"Downloading: {percent}%")
 
-            self.parent.log("Download complete. Installing...", "green")
+            self.log("Download complete. Installing...")
 
             current_exe = sys.executable
             backup_exe = current_exe + ".backup"
 
             if os.path.exists(backup_exe):
-                try:
-                    os.remove(backup_exe)
-                except:
-                    pass
-
+                os.remove(backup_exe)
             shutil.move(current_exe, backup_exe)
             shutil.move(self.temp_path, current_exe)
             os.chmod(current_exe, 0o755)
 
-            self.parent.log("Update installed. Restarting...", "green")
+            self.log("Update installed. Restarting...")
             time.sleep(1.5)
-            self.parent.close()
             subprocess.Popen([current_exe])
-            sys.exit(0)
+            os._exit(0)
 
         except Exception as e:
-            self.parent.log(f"Update failed: {e}", "red")
+            self.log(f"Update failed: {e}", "red")
             backup_exe = sys.executable + ".backup"
             if os.path.exists(backup_exe):
-                try:
-                    shutil.move(backup_exe, sys.executable)
-                except:
-                    pass
+                shutil.move(backup_exe, sys.executable)
+
 
 # --------------------------------------------------------------------------- #
 # ──────────────────────────────── STORAGE ────────────────────────────────── #
@@ -334,6 +314,7 @@ class RobloxAPI:
             }
         return None
 
+
 # --------------------------------------------------------------------------- #
 # ─────────────────────────── DISCORD NOTIFIER ──────────────────────────── #
 # --------------------------------------------------------------------------- #
@@ -353,9 +334,11 @@ class DiscordNotifier:
 
     def transaction_change(self, changes: Dict[str, tuple]):
         fields = [
-            {"name": k,
-             "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}",
-             "inline": False}
+            {
+                "name": k,
+                "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}",
+                "inline": False
+            }
             for k, (old, new) in changes.items()
         ]
         self._send({
@@ -395,76 +378,37 @@ class DiscordNotifier:
         color = 0x00ff00 if status == "RECOVERED" else 0xff0000
         title = "API Recovered" if status == "RECOVERED" else "API Down"
         desc = f"Recovered after {duration:.1f}s" if duration else "Monitoring paused"
-        self._send({"title": title, "description": desc, "color": color, "timestamp": datetime.now(timezone.utc).isoformat()})
+        self._send({"title": title, "description": desc, "color": color,
+                    "timestamp": datetime.now(timezone.utc).isoformat()})
+
 
 # --------------------------------------------------------------------------- #
-# ────────────────────────────── SETUP WIZARD ────────────────────────────── #
+# ──────────────────────── WINUI 3 + pythonnet (2025) ───────────────────── #
 # --------------------------------------------------------------------------- #
-class SetupWizard(QtWidgets.QDialog):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
-        super().__init__(parent)
-        self.setWindowTitle("First Time Setup")
-        self.setModal(True)
-        self.config = Config()
-        self._build_ui()
+try:
+    import clr
+    clr.AddReference("System.Runtime")
+    clr.AddReference("System.Collections")
+    clr.AddReference("Microsoft.UI.Xaml")
+    clr.AddReference("Microsoft.UI.Xaml.Hosting")
+    clr.AddReference("Microsoft.UI.Xaml.Controls")
+    clr.AddReference("Microsoft.UI.Dispatching")
+    from Microsoft.UI.Xaml import Application, Window, Thickness
+    from Microsoft.UI.Xaml.Controls import (
+        StackPanel, TextBlock, TextBox, Button, ComboBox, ComboBoxItem,
+        ScrollViewer, ListView, ListViewItem, Flyout, MenuFlyout, MenuFlyoutItem
+    )
+    from Microsoft.UI.Xaml.Hosting import WindowsXamlManager
+    from Microsoft.UI.Dispatching import DispatcherQueueController
+    from Microsoft.UI import Colors
+    WINUI_AVAILABLE = True
+except Exception as e:
+    WINUI_AVAILABLE = False
+    print(f"WinUI 3 not available: {e}")
+    sys.exit(1)
 
-    def _build_ui(self):
-        layout = QtWidgets.QFormLayout(self)
-        self.webhook = QtWidgets.QLineEdit()
-        self.webhook.setEchoMode(QtWidgets.QLineEdit.Password)
-        layout.addRow("Discord Webhook URL:", self.webhook)
-
-        self.cookie = QtWidgets.QLineEdit()
-        self.cookie.setEchoMode(QtWidgets.QLineEdit.Password)
-        layout.addRow(".ROBLOSECURITY Cookie:", self.cookie)
-
-        self.emoji_id = QtWidgets.QLineEdit()
-        layout.addRow("Emoji ID:", self.emoji_id)
-
-        self.emoji_name = QtWidgets.QLineEdit()
-        layout.addRow("Emoji Name:", self.emoji_name)
-
-        self.interval = QtWidgets.QLineEdit("180")
-        layout.addRow("Check Interval (s):", self.interval)
-
-        self.timeframe = QtWidgets.QComboBox()
-        self.timeframe.addItems(["Day", "Week", "Month", "Year"])
-        layout.addRow("Timeframe:", self.timeframe)
-
-        btn_box = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
-        )
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-        layout.addRow(btn_box)
-
-    def accept(self):
-        try:
-            webhook = self.webhook.text().strip()
-            cookie = self.cookie.text().strip()
-            if webhook:
-                self.config["DISCORD_WEBHOOK_URL"] = webhook
-            if cookie:
-                self.config["ROBLOSECURITY"] = cookie
-            self.config["DISCORD_EMOJI_ID"] = self.emoji_id.text().strip()
-            self.config["DISCORD_EMOJI_NAME"] = self.emoji_name.text().strip()
-            self.config["CHECK_INTERVAL"] = self.interval.text().strip() or "60"
-            self.config["TOTAL_CHECKS_TYPE"] = self.timeframe.currentText()
-            super().accept()
-        except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save configuration:\n{exc}")
-
-# --------------------------------------------------------------------------- #
-# ────────────────────────────── MAIN WINDOW ─────────────────────────────── #
-# --------------------------------------------------------------------------- #
-class MainWindow(QtWidgets.QMainWindow):
-    log_signal = QtCore.pyqtSignal(str, str)
-    update_label_signal = QtCore.pyqtSignal(object, str)
-
+class MainWindow:
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Roblox Transaction & Robux Monitor")
-        self.resize(850, 620)
         self.config = Config()
         self.storage = Storage()
         self.api = RobloxAPI(self.config["ROBLOSECURITY"])
@@ -473,161 +417,159 @@ class MainWindow(QtWidgets.QMainWindow):
             self.config["DISCORD_EMOJI_NAME"],
             self.config["DISCORD_EMOJI_ID"]
         )
-        self.updater = AutoUpdater(self)
+        self.updater = AutoUpdater(self.log)
         self.stop_event = threading.Event()
         self.monitor_thread: Optional[threading.Thread] = None
         self.last_status: Optional[Dict[str, Any]] = None
         self.downtime_start: Optional[float] = None
+        self._start_time = 0.0
 
-        self.theme_group = QtWidgets.QActionGroup(self)
-        self.dark_action = QtWidgets.QAction("Dark", self, checkable=True)
-        self.light_action = QtWidgets.QAction("Light", self, checkable=True)
-        for act in (self.dark_action, self.light_action):
-            self.theme_group.addAction(act)
-        self.theme_group.triggered.connect(self.on_theme_changed)
+        # WinUI setup
+        self.dispatcher = DispatcherQueueController.CreateOnCurrentThread()
+        WindowsXamlManager.InitializeForCurrentThread()
+        self.app = Application.Start(lambda _: None)
+        self.window = Window()
+        self.window.Title = "Roblox Transaction & Robux Monitor"
+        self.window.SetTitleBar(None)
 
-        self._build_ui()
-        self._connect_signals()
-        self.load_theme()
-        self.check_first_run()
+        # Root panel
+        root = StackPanel()
+        root.Margin = Thickness(16)
+        root.Spacing = 12
 
-    def _connect_signals(self):
-        self.log_signal.connect(self._append_log)
-        self.update_label_signal.connect(lambda w, t: w.setText(t))
+        # Status labels
+        self.lbl_user = TextBlock()
+        self.lbl_user.Text = "User: -"
+        self.lbl_robux = TextBlock()
+        self.lbl_robux.Text = "Robux: -"
+        self.lbl_status = TextBlock()
+        self.lbl_status.Text = "Status: -"
+        self.lbl_next = TextBlock()
+        self.lbl_next.Text = "Next check: -"
 
-    def _build_ui(self):
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        layout = QtWidgets.QVBoxLayout(central)
-        tabs = QtWidgets.QTabWidget()
-        layout.addWidget(tabs)
+        for lbl in [self.lbl_user, self.lbl_robux, self.lbl_status, self.lbl_next]:
+            lbl.FontSize = 14
+            root.Children.Append(lbl)
 
-        # Dashboard
-        dash = QtWidgets.QWidget()
-        dash_layout = QtWidgets.QGridLayout(dash)
-        self.lbl_user = QtWidgets.QLabel("User: -")
-        self.lbl_robux = QtWidgets.QLabel("Robux: -")
-        self.lbl_status = QtWidgets.QLabel("Status: -")
-        self.lbl_next = QtWidgets.QLabel("Next check: -")
-        for i, (label, widget) in enumerate([
-            ("<b>User:</b>", self.lbl_user),
-            ("<b>Robux:</b>", self.lbl_robux),
-            ("<b>Account:</b>", self.lbl_status),
-            ("<b>Next check:</b>", self.lbl_next)
-        ]):
-            dash_layout.addWidget(QtWidgets.QLabel(label), i, 0)
-            dash_layout.addWidget(widget, i, 1)
-        self.log_view = QtWidgets.QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet("font-family: Consolas; font-size: 10pt;")
-        dash_layout.addWidget(self.log_view, 4, 0, 1, 2)
-        tabs.addTab(dash, "Dashboard")
+        # Log viewer
+        self.log_list = ListView()
+        self.log_list.Height = 400
+        scroll = ScrollViewer()
+        scroll.Content = self.log_list
+        root.Children.Append(scroll)
 
-        # Config
-        cfg = QtWidgets.QWidget()
-        cfg_layout = QtWidgets.QFormLayout(cfg)
-        self.cfg_webhook = QtWidgets.QLineEdit()
-        self.cfg_webhook.setEchoMode(QtWidgets.QLineEdit.Password)
-        cfg_layout.addRow("Webhook URL:", self.cfg_webhook)
-        self.cfg_cookie = QtWidgets.QLineEdit()
-        self.cfg_cookie.setEchoMode(QtWidgets.QLineEdit.Password)
-        cfg_layout.addRow(".ROBLOSECURITY:", self.cfg_cookie)
-        self.cfg_emoji_id = QtWidgets.QLineEdit()
-        cfg_layout.addRow("Emoji ID:", self.cfg_emoji_id)
-        self.cfg_emoji_name = QtWidgets.QLineEdit()
-        cfg_layout.addRow("Emoji Name:", self.cfg_emoji_name)
-        self.cfg_interval = QtWidgets.QLineEdit()
-        cfg_layout.addRow("Interval (s):", self.cfg_interval)
-        self.cfg_timeframe = QtWidgets.QComboBox()
-        self.cfg_timeframe.addItems(["Day", "Week", "Month", "Year"])
-        cfg_layout.addRow("Timeframe:", self.cfg_timeframe)
-        save_btn = QtWidgets.QPushButton("Save Config")
-        save_btn.clicked.connect(self.save_config)
-        cfg_layout.addRow(save_btn)
-        tabs.addTab(cfg, "Config")
+        # Buttons
+        btn_update = Button()
+        btn_update.Content = "Check Update"
+        btn_update.Click += lambda s, e: self.updater.check_and_update(manual=True)
 
-        # Menu
-        menu = self.menuBar()
-        file_menu = menu.addMenu("File")
-        file_menu.addAction("Check for Updates", lambda: self.updater.check_and_update(manual=True))
-        file_menu.addSeparator()
-        file_menu.addAction("Exit", self.close)
-        view_menu = menu.addMenu("View")
-        theme_menu = view_menu.addMenu("Theme")
-        theme_menu.addAction(self.dark_action)
-        theme_menu.addAction(self.light_action)
+        btn_config = Button()
+        btn_config.Content = "Config"
+        btn_config.Click += lambda s, e: self.show_config_flyout(btn_config)
 
-    def _append_log(self, msg: str, color: str = ""):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        html = f'<span style="color:{color}">[{timestamp}]: {msg}</span>'
-        self.log_view.appendHtml(html)
+        btn_exit = Button()
+        btn_exit.Content = "Exit"
+        btn_exit.Click += lambda s, e: self.close()
+
+        btn_panel = StackPanel()
+        btn_panel.Orientation = 0  # Horizontal
+        btn_panel.Spacing = 8
+        btn_panel.Children.Append(btn_update)
+        btn_panel.Children.Append(btn_config)
+        btn_panel.Children.Append(btn_exit)
+        root.Children.Append(btn_panel)
+
+        self.window.Content = root
+        self.window.Activate()
+
+        # Start monitoring
+        threading.Thread(target=self.check_first_run, daemon=True).start()
 
     def log(self, msg: str, color: str = ""):
-        self.log_signal.emit(msg, color)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{timestamp}] {msg}"
+        item = ListViewItem()
+        item.Content = line
+        self.log_list.Items.Append(item)
+        # Auto-scroll
+        if self.log_list.Items.Count > 0:
+            self.log_list.ScrollIntoView(self.log_list.Items[self.log_list.Items.Count - 1])
 
-    def update_label(self, widget, text: str):
-        self.update_label_signal.emit(widget, text)
+    def update_label(self, lbl, text: str):
+        lbl.Text = text
 
-    def load_theme(self):
-        theme = self.config.data.get("THEME", "System")
-        if theme == "Dark":
-            self.dark_action.setChecked(True)
-            self.apply_dark()
-        elif theme == "Light":
-            self.light_action.setChecked(True)
-            self.apply_light()
+    def show_config_flyout(self, button):
+        flyout = Flyout()
 
-    def on_theme_changed(self, action: QtWidgets.QAction):
-        if action == self.dark_action:
-            self.config["THEME"] = "Dark"
-            self.apply_dark()
-        elif action == self.light_action:
-            self.config["THEME"] = "Light"
-            self.apply_light()
+        panel = StackPanel()
+        panel.Spacing = 8
+        panel.Margin = Thickness(12)
 
-    def apply_dark(self):
-        self.setStyleSheet("""
-            QMainWindow, QDialog, QWidget { background-color: #1e1e1e; color: #ffffff; }
-            QLineEdit, QComboBox, QPlainTextEdit, QTabWidget::pane {
-                background-color: #2d2d2d; color: #ffffff;
-                border: 1px solid #444; border-radius: 4px; padding: 4px;
-            }
-            QLineEdit:focus, QComboBox:focus { border: 1px solid #0078d7; }
-            QPushButton {
-                background-color: #0078d7; color: white; border: none;
-                padding: 6px 12px; border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-            QPushButton:pressed { background-color: #005a9e; }
-            QTabBar::tab { background: #2d2d2d; color: #ccc; padding: 8px 16px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #0078d7; color: white; }
-            QTabWidget::pane { border-top: 2px solid #0078d7; }
-        """)
+        # Helper to create field
+        def add_field(label_text, key, is_password=False):
+            tb = TextBlock()
+            tb.Text = label_text
+            panel.Children.Append(tb)
+            box = TextBox()
+            box.Text = self.config[key]
+            box.IsPassword = is_password
+            box.Tag = key
+            panel.Children.Append(box)
+            return box
 
-    def apply_light(self):
-        self.setStyleSheet("""
-            QMainWindow, QDialog, QWidget { background-color: #f3f3f3; color: #000000; }
-            QLineEdit, QComboBox, QPlainTextEdit, QTabWidget::pane {
-                background-color: #ffffff; color: #000000;
-                border: 1px solid #ccc; border-radius: 4px; padding: 4px;
-            }
-            QLineEdit:focus, QComboBox:focus { border: 1px solid #0078d7; }
-            QPushButton {
-                background-color: #0078d7; color: white; border: none;
-                padding: 6px 12px; border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #106ebe; }
-            QTabBar::tab { background: #e0e0e0; color: #333; padding: 8px 16px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #0078d7; color: white; }
-            QTabWidget::pane { border-top: 2px solid #0078d7; }
-        """)
+        webhook_box = add_field("Discord Webhook URL:", "DISCORD_WEBHOOK_URL")
+        cookie_box = add_field(".ROBLOSECURITY Cookie:", "ROBLOSECURITY", True)
+        emoji_id_box = add_field("Emoji ID:", "DISCORD_EMOJI_ID")
+        emoji_name_box = add_field("Emoji Name:", "DISCORD_EMOJI_NAME")
+        interval_box = add_field("Check Interval (seconds):", "CHECK_INTERVAL")
+        
+        timeframe_combo = ComboBox()
+        timeframe_combo.Header = "Timeframe:"
+        for opt in ["Day", "Week", "Month", "Year"]:
+            item = ComboBoxItem()
+            item.Content = opt
+            item.IsSelected = (opt == self.config["TOTAL_CHECKS_TYPE"])
+            timeframe_combo.Items.Append(item)
+        panel.Children.Append(timeframe_combo)
+
+        save_btn = Button()
+        save_btn.Content = "Save"
+        save_btn.Click += lambda s, e: self.save_config_from_flyout(
+            webhook_box, cookie_box, emoji_id_box, emoji_name_box,
+            interval_box, timeframe_combo, flyout
+        )
+        panel.Children.Append(save_btn)
+
+        flyout.Content = panel
+        flyout.ShowAt(button)
+
+    def save_config_from_flyout(self, webhook_box, cookie_box, emoji_id_box, emoji_name_box,
+                                interval_box, timeframe_combo, flyout):
+        self.config["DISCORD_WEBHOOK_URL"] = webhook_box.Text
+        self.config["ROBLOSECURITY"] = cookie_box.Text
+        self.config["DISCORD_EMOJI_ID"] = emoji_id_box.Text
+        self.config["DISCORD_EMOJI_NAME"] = emoji_name_box.Text
+        self.config["CHECK_INTERVAL"] = interval_box.Text or "180"
+        self.config["TOTAL_CHECKS_TYPE"] = next(
+            (item.Content for item in timeframe_combo.Items if item.IsSelected), "Day"
+        )
+
+        self.api = RobloxAPI(self.config["ROBLOSECURITY"])
+        self.notifier = DiscordNotifier(
+            self.config["DISCORD_WEBHOOK_URL"],
+            self.config["DISCORD_EMOJI_NAME"],
+            self.config["DISCORD_EMOJI_ID"]
+        )
+        self.log("Configuration saved.", "green")
+        flyout.Hide()
 
     def check_first_run(self):
+        time.sleep(0.5)  # Let UI settle
         if not self.config["ROBLOSECURITY"]:
-            wizard = SetupWizard(self)
-            if wizard.exec_() != QtWidgets.QDialog.Accepted:
-                QtWidgets.QMessageBox.information(self, "Info", "Setup cancelled – closing.")
-                sys.exit(0)
+            self.log("First run – opening setup...", "orange")
+            # Reuse config flyout logic
+            dummy_btn = Button()
+            self.show_config_flyout(dummy_btn)
             self.config = Config()
             self.api = RobloxAPI(self.config["ROBLOSECURITY"])
             self.notifier = DiscordNotifier(
@@ -637,52 +579,36 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
         if not self.config["ROBLOSECURITY"].startswith("_|WARNING"):
-            config_path = Config.CONFIG_FILE
-            QtWidgets.QMessageBox.critical(
-                self, "Invalid Cookie Format",
-                f"<b>.ROBLOSECURITY cookie is invalid!</b><br><br>"
-                f"It must start with <code>_&#124;WARNING</code><br><br>"
-                f"<b>Current value:</b><br><code>{self.config['ROBLOSECURITY'][:50]}{'...' if len(self.config['ROBLOSECURITY']) > 50 else ''}</code><br><br>"
-                f"<b>Config file location:</b><br><code>{config_path}</code>"
+            from Microsoft.UI.Xaml.Controls import ContentDialog, ContentDialogButton
+            dialog = ContentDialog()
+            dialog.Title = "Invalid Cookie"
+            dialog.Content = (
+                f".ROBLOSECURITY must start with \"_|WARNING\"\n\n"
+                f"Current: {self.config['ROBLOSECURITY'][:50]}{'...' if len(self.config['ROBLOSECURITY']) > 50 else ''}\n\n"
+                f"Config: {Config.CONFIG_FILE}"
             )
+            dialog.CloseButtonText = "Exit"
+            dialog.ShowAsync()
             sys.exit(1)
 
-        self.cfg_webhook.setText(self.config["DISCORD_WEBHOOK_URL"])
-        self.cfg_cookie.setText(self.config["ROBLOSECURITY"])
-        self.cfg_emoji_id.setText(self.config["DISCORD_EMOJI_ID"])
-        self.cfg_emoji_name.setText(self.config["DISCORD_EMOJI_NAME"])
-        self.cfg_interval.setText(self.config["CHECK_INTERVAL"])
-        self.cfg_timeframe.setCurrentText(self.config["TOTAL_CHECKS_TYPE"])
-
         self.start_monitoring()
-        self.updater.check_and_update()  # Silent background check
-
-    def save_config(self):
-        try:
-            self.config["DISCORD_WEBHOOK_URL"] = self.cfg_webhook.text().strip()
-            self.config["ROBLOSECURITY"] = self.cfg_cookie.text().strip()
-            self.config["DISCORD_EMOJI_ID"] = self.cfg_emoji_id.text().strip()
-            self.config["DISCORD_EMOJI_NAME"] = self.cfg_emoji_name.text().strip()
-            self.config["CHECK_INTERVAL"] = self.cfg_interval.text().strip() or "60"
-            self.config["TOTAL_CHECKS_TYPE"] = self.cfg_timeframe.currentText()
-            self.api = RobloxAPI(self.config["ROBLOSECURITY"])
-            self.notifier = DiscordNotifier(
-                self.config["DISCORD_WEBHOOK_URL"],
-                self.config["DISCORD_EMOJI_NAME"],
-                self.config["DISCORD_EMOJI_ID"]
-            )
-            self.log("Configuration saved.", "green")
-        except Exception as e:
-            self.log(f"Config save error: {e}", "red")
+        self.updater.check_and_update()
 
     def start_monitoring(self):
         if not self.api.authenticate():
             self.log("Authentication failed – check cookie.", "red")
             return
-        self.update_label(self.lbl_user, f"<b>{self.api.user_id}</b>")
-        self.log(f"Authenticated as user ID: {self.api.user_id}", "cyan")
+        self.update_label(self.lbl_user, f"User: {self.api.user_id}")
+        self.log(f"Authenticated as user ID: {self.api.user_id}")
         self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
         self.monitor_thread.start()
+
+        # Timer via Dispatcher
+        from System import TimeSpan
+        timer = self.dispatcher.CreateTimer()
+        timer.Interval = TimeSpan.FromSeconds(1)
+        timer.Tick += lambda s, e: self._timer_tick()
+        timer.Start()
 
     def monitor_loop(self):
         while not self.stop_event.is_set():
@@ -701,8 +627,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             r = rate_limited_request(
                 "GET", "https://users.roblox.com/v1/users/authenticated",
-                cookies=self.api.cookies, timeout=10
-            )
+                cookies=self.api.cookies, timeout=10)
             if r.status_code == 200:
                 if self.downtime_start:
                     duration = time.time() - self.downtime_start
@@ -725,7 +650,7 @@ class MainWindow(QtWidgets.QMainWindow):
         changes = {k: (last.get(k, 0), v) for k, v in data.items() if v != last.get(k, 0)}
         if changes:
             for k, (o, n) in changes.items():
-                self.log(f"{k}: {abbreviate_number(o)} to {abbreviate_number(n)}", "yellow")
+                self.log(f"{k}: {abbreviate_number(o)} to {abbreviate_number(n)}")
             self.notifier.transaction_change(changes)
             self.storage.save_transactions(data)
 
@@ -735,8 +660,8 @@ class MainWindow(QtWidgets.QMainWindow):
         last = self.storage.load_robux()
         if robux != last:
             change = "Increased" if robux > last else "Decreased"
-            self.log(f"Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}", "magenta")
-            self.update_label(self.lbl_robux, f"<b>{abbreviate_number(robux)}</b>")
+            self.log(f"Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}")
+            self.update_label(self.lbl_robux, f"Robux: {abbreviate_number(robux)}")
             self.notifier.robux_change(last, robux)
             self.storage.save_robux(robux)
 
@@ -747,32 +672,53 @@ class MainWindow(QtWidgets.QMainWindow):
             banned = status.get("is_banned", False)
             color = "red" if banned else "green"
             self.log(f"Account {'BANNED' if banned else 'ACTIVE'}: {status['username']}", color)
-            self.update_label(self.lbl_status, f"<b>{'BANNED' if banned else 'ACTIVE'}</b>")
+            self.update_label(self.lbl_status, f"Status: {'BANNED' if banned else 'ACTIVE'}")
             self.notifier.account_status(status, self.last_status)
             self.last_status = status
 
+    def _timer_tick(self):
+        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
+        remaining = self._remaining_seconds()
+        mins, secs = divmod(remaining, 60)
+        self.update_label(self.lbl_next, f"Next check in {mins:02d}:{secs:02d}")
+
     def _wait(self):
-        interval = max(10, int(self.config["CHECK_INTERVAL"] or 180))
-        for i in range(interval):
+        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
+        self._start_time = time.time()
+        for _ in range(interval):
             if self.stop_event.is_set():
                 break
-            mins, secs = divmod(interval - i, 60)
-            txt = f"Next check in {mins:02d}:{secs:02d}"
-            self.update_label(self.lbl_next, txt)
             time.sleep(1)
 
-    def closeEvent(self, event: QtGui.QCloseEvent):
+    def _remaining_seconds(self):
+        if not self._start_time:
+            return 0
+        elapsed = time.time() - self._start_time
+        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
+        return max(0, interval - int(elapsed))
+
+    def close(self):
         self.stop_event.set()
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=2)
-        event.accept()
+        self.window.Close()
+
 
 # --------------------------------------------------------------------------- #
 # ────────────────────────────────── ENTRY ────────────────────────────────── #
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    app = QtWidgets.QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(True)
-    win = MainWindow()
-    win.show()
-    sys.exit(app.exec_())
+    if not sys.platform.startswith("win"):
+        print("This script requires Windows.")
+        sys.exit(1)
+
+    # Ensure WinUI 3 runtime is available (Windows 10 1809+ or Windows 11)
+    try:
+        app = MainWindow()
+        # Keep Python alive while WinUI runs
+        import time
+        while not app.stop_event.is_set():
+            time.sleep(0.1)
+    except Exception as e:
+        print(f"Failed to start WinUI: {e}")
+        sys.exit(1)
