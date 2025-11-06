@@ -334,7 +334,6 @@ class RobloxAPI:
             }
         return None
 
-
 # --------------------------------------------------------------------------- #
 # ─────────────────────────── DISCORD NOTIFIER ──────────────────────────── #
 # --------------------------------------------------------------------------- #
@@ -398,7 +397,6 @@ class DiscordNotifier:
         desc = f"Recovered after {duration:.1f}s" if duration else "Monitoring paused"
         self._send({"title": title, "description": desc, "color": color, "timestamp": datetime.now(timezone.utc).isoformat()})
 
-
 # --------------------------------------------------------------------------- #
 # ────────────────────────────── SETUP WIZARD ────────────────────────────── #
 # --------------------------------------------------------------------------- #
@@ -426,7 +424,7 @@ class SetupWizard(QtWidgets.QDialog):
         self.emoji_name = QtWidgets.QLineEdit()
         layout.addRow("Emoji Name:", self.emoji_name)
 
-        self.interval = QtWidgets.QLineEdit("60")
+        self.interval = QtWidgets.QLineEdit("180")
         layout.addRow("Check Interval (s):", self.interval)
 
         self.timeframe = QtWidgets.QComboBox()
@@ -455,7 +453,6 @@ class SetupWizard(QtWidgets.QDialog):
             super().accept()
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Error", f"Failed to save configuration:\n{exc}")
-
 
 # --------------------------------------------------------------------------- #
 # ────────────────────────────── MAIN WINDOW ─────────────────────────────── #
@@ -562,7 +559,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _append_log(self, msg: str, color: str = ""):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        html = f'<span style="color:{color}">{timestamp} {msg}</span>'
+        html = f'<span style="color:{color}">[{timestamp}]: {msg}</span>'
         self.log_view.appendHtml(html)
 
     def log(self, msg: str, color: str = ""):
@@ -769,7 +766,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=2)
         event.accept()
-
 
 # --------------------------------------------------------------------------- #
 # ────────────────────────────────── ENTRY ────────────────────────────────── #

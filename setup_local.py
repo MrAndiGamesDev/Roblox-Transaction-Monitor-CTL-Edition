@@ -63,7 +63,8 @@ class VirtualEnvManager:
                 check=True
             )
             outdated = result.stdout.strip()
-            if '"name": "pip"' not in outdated:
+            is_pip_outdated = '"name": "pip"' in outdated
+            if not is_pip_outdated:
                 logger.info("You are on the latest version of pip.")
                 return True
         except subprocess.CalledProcessError:
