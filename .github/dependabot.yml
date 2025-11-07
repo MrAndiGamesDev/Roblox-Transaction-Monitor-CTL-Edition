@@ -14,10 +14,3 @@ updates:
     open-pull-requests-limit: 10
     reviewers:
       - "MrAndiGamesDev"
-  - package-ecosystem: "gitsubmodule"
-    directory: "/"
-    schedule:
-      interval: "daily"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "MrAndiGamesDev"
