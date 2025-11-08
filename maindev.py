@@ -1,64 +1,180 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Roblox Transaction & Robux Monitor – Native Windows UI (WinUI 3 via pythonnet)
-Author: MrAndiGamesDev (2025 WinUI 3 edition)
+Roblox Transaction & Robux Monitor – CLI Edition
+Author: MrAndiGamesDev (Refactored & Enhanced)
+Secure, efficient, and user-friendly monitoring tool.
 """
-import os
-import sys
+
 import json
 import time
+import signal
 import threading
+import logging
 import requests
-import tempfile
-import shutil
-import subprocess
-import re
+from getpass import getpass
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
+from pathlib import Path
 
-# --------------------------------------------------------------------------- #
-# ──────────────────────────────── CONFIG ────────────────────────────────── #
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration & Paths
+# ─────────────────────────────────────────────────────────────────────────────
+class Paths:
+    APP_DIR = Path.home() / ".roblox_transaction_monitor"
+    CONFIG_FILE = APP_DIR / "config.json"
+    STORAGE_DIR = APP_DIR / "data"
+    VERSION_FILE = Path(__file__).parent / "VERSION"
+
+    @classmethod
+    def ensure_dirs(cls):
+        cls.APP_DIR.mkdir(mode=0o700, exist_ok=True)
+        cls.STORAGE_DIR.mkdir(exist_ok=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging Setup
+# ─────────────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    datefmt="%H:%M:%S"
+)
+log = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Terminal Colors
+# ─────────────────────────────────────────────────────────────────────────────
+class Colors:
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    MAGENTA = "\033[95m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    @staticmethod
+    def colorize(text: str, color: str) -> str:
+        return f"{color}{text}{Colors.RESET}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secure Input & Censoring
+# ─────────────────────────────────────────────────────────────────────────────
+class SecureInput:
+    @staticmethod
+    def censor(text: str, show_start: int = 20, show_end: int = 10) -> str:
+        if not text or len(text) <= show_start + show_end:
+            return "*" * len(text)
+        return f"{text[:show_start]}{'*' * (len(text) - show_start - show_end)}{text[-show_end:]}"
+
+    @staticmethod
+    def webhook(url: str) -> str:
+        return SecureInput.censor(url, show_start=25, show_end=0) if url else ""
+
+    @staticmethod
+    def cookie(cookie: str) -> str:
+        return SecureInput.censor(cookie, show_start=35, show_end=8) if cookie else ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rate Limiter (Thread-Safe)
+# ─────────────────────────────────────────────────────────────────────────────
+class RateLimiter:
+    def __init__(self, min_interval: float = 1.0):
+        self.min_interval = min_interval
+        self.last_call = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            sleep_time = self.min_interval - (now - self.last_call)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            self.last_call = time.time()
+
+rate_limiter = RateLimiter()
+
+def rate_limited_request(*args, **kwargs):
+    rate_limiter.wait()
+    return requests.request(*args, **kwargs)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities
+# ─────────────────────────────────────────────────────────────────────────────
+def abbreviate_number(num: int) -> str:
+    abs_num = abs(num)
+    for limit, suffix in [(1e15, "Q"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
+        if abs_num >= limit:
+            return f"{num/limit:.2f}{suffix}"
+    return str(num)
+
+def safe_write(path: Path, data: Dict):
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        log.error(f"Failed to write {path}: {e}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Update Checker
+# ─────────────────────────────────────────────────────────────────────────────
+class UpdateChecker:
+    REPO = "MrAndiGamesDev/Roblox-Transaction-Monitor-CTL-Edition"
+    URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+
+    @staticmethod
+    def get_current_version() -> str:
+        try:
+            return Paths.VERSION_FILE.read_text().strip()
+        except Exception:
+            return "v1.0.0"
+
+    @staticmethod
+    def check() -> Optional[str]:
+        try:
+            r = requests.get(UpdateChecker.URL, timeout=5)
+            if r.status_code != 200:
+                return None
+            latest = r.json().get("tag_name", "")
+            current = UpdateChecker.get_current_version()
+            if latest and latest != current:
+                log.warning(Colors.colorize(f"Update available: {latest} (current: {current})", Colors.YELLOW))
+                log.info(f"Download: {r.json().get('html_url')}")
+            return current
+        except Exception:
+            return None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration Manager
+# ─────────────────────────────────────────────────────────────────────────────
 class Config:
-    APP_DIR = os.path.join(os.path.expanduser("~"), ".roblox_transaction_history")
-    CONFIG_FILE = os.path.join(APP_DIR, "config.json")
-    STORAGE_DIR = os.path.join(APP_DIR, "transaction_info")
-    DEFAULT = {
+    DEFAULTS = {
         "DISCORD_WEBHOOK_URL": "",
         "ROBLOSECURITY": "",
         "DISCORD_EMOJI_ID": "",
         "DISCORD_EMOJI_NAME": "",
-        "CHECK_INTERVAL": "180",
-        "TOTAL_CHECKS_TYPE": "Day",
+        "CHECK_INTERVAL": "60",
+        "TOTAL_CHECKS_TYPE": "Day"
     }
 
     def __init__(self):
-        os.makedirs(self.APP_DIR, exist_ok=True, mode=0o700)
-        os.makedirs(self.STORAGE_DIR, exist_ok=True)
-        self.data = self.DEFAULT.copy()
-        self._load()
+        Paths.ensure_dirs()
+        self.data = self.DEFAULTS.copy()
+        self.load()
 
-    def _load(self):
-        if os.path.exists(self.CONFIG_FILE):
+    def load(self):
+        if Paths.CONFIG_FILE.exists():
             try:
-                with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                for k, v in self.DEFAULT.items():
+                loaded = json.loads(Paths.CONFIG_FILE.read_text())
+                for k, v in self.DEFAULTS.items():
                     self.data[k] = loaded.get(k, v)
             except Exception:
-                pass
+                log.warning(Colors.colorize("Invalid config file. Using defaults.", Colors.YELLOW))
         self.save()
 
     def save(self):
-        tmp = self.CONFIG_FILE + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2)
-            os.replace(tmp, self.CONFIG_FILE)
-        except Exception:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+        safe_write(Paths.CONFIG_FILE, self.data)
 
     def __getitem__(self, key):
         return self.data[key]
@@ -67,152 +183,30 @@ class Config:
         self.data[key] = value
         self.save()
 
+    def validate_cookie(self) -> bool:
+        cookie = self["ROBLOSECURITY"]
+        if not cookie.startswith("_|WARNING"):
+            log.error(Colors.colorize("Invalid .ROBLOSECURITY cookie: must start with '_|WARNING'", Colors.RED))
+            return False
+        return True
 
-# --------------------------------------------------------------------------- #
-# ──────────────────────────────── UTILITIES ─────────────────────────────── #
-# --------------------------------------------------------------------------- #
-_last_call = 0
-def rate_limited_request(*args, **kwargs):
-    global _last_call
-    now = time.time()
-    sleep = 1.0 - (now - _last_call)
-    if sleep > 0:
-        time.sleep(sleep)
-    _last_call = time.time()
-    return requests.request(*args, **kwargs)
+    def summary(self):
+        log.info(Colors.colorize("Config Summary:", Colors.CYAN))
+        log.info(f"  Webhook : {SecureInput.webhook(self['DISCORD_WEBHOOK_URL'])}")
+        log.info(f"  Cookie  : {SecureInput.cookie(self['ROBLOSECURITY'])}")
+        log.info(f"  Emoji   : {self['DISCORD_EMOJI_NAME']}:{self['DISCORD_EMOJI_ID']}")
+        log.info(f"  Interval: {self['CHECK_INTERVAL']}s")
+        log.info(f"  Timeframe: {self['TOTAL_CHECKS_TYPE']}")
 
-
-def abbreviate_number(num: int) -> str:
-    abs_num = abs(num)
-    for limit, suffix in [(1e15, "Q"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
-        if abs_num >= limit:
-            return f"{num/limit:.2f}{suffix}"
-    return str(num)
-
-
-# --------------------------------------------------------------------------- #
-# ────────────────────────────── AUTO-UPDATER ─────────────────────────────── #
-# --------------------------------------------------------------------------- #
-CURRENT_VERSION = "1.0.0"
-GITHUB_REPO = "MrAndiGamesDev/Roblox-Transaction-Monitor-CTL-Edition"
-GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-ASSET_WINDOWS = "Roblox-Transaction-Monitor-CTL-Edition.exe"
-
-class AutoUpdater:
-    def __init__(self, log_func):
-        self.log = log_func
-        self.current_version = self._get_current_version()
-        self.download_url = None
-        self.asset_name = None
-        self.temp_path = None
-
-    def _get_current_version(self) -> str:
-        version_file = os.path.join(os.path.dirname(__file__), "VERSION")
-        if os.path.exists(version_file):
-            try:
-                with open(version_file, "r", encoding="utf-8") as f:
-                    return f.read().strip().lstrip("v")
-            except Exception:
-                pass
-        return CURRENT_VERSION
-
-    def check_and_update(self, manual: bool = False):
-        def run():
-            try:
-                if manual:
-                    self.log("Checking for updates...")
-
-                r = requests.get(GITHUB_API, timeout=10)
-                if r.status_code != 200:
-                    if manual:
-                        self.log("GitHub API unreachable.", "red")
-                    return
-
-                data = r.json()
-                latest = data["tag_name"].lstrip("v")
-
-                if self._compare_versions(latest, self.current_version) <= 0:
-                    if manual:
-                        self.log("You are up to date.", "green")
-                    return
-
-                asset = next((a for a in data["assets"] if a["name"] == ASSET_WINDOWS), None)
-                if not asset:
-                    self.log("No Windows update found.", "red")
-                    return
-
-                self.download_url = asset["browser_download_url"]
-                self.asset_name = asset["name"]
-                self.log(f"Update found: v{latest} ({self.asset_name})")
-                self._download_and_install()
-            except Exception as e:
-                if manual:
-                    self.log(f"Update check failed: {e}", "red")
-
-        threading.Thread(target=run, daemon=True).start()
+# ─────────────────────────────────────────────────────────────────────────────
+# Storage Manager
+# ─────────────────────────────────────────────────────────────────────────────
+class Storage:
+    TRANS_FILE = Paths.STORAGE_DIR / "transactions.json"
+    ROBUX_FILE = Paths.STORAGE_DIR / "robux.json"
 
     @staticmethod
-    def _compare_versions(v1: str, v2: str) -> int:
-        v1p = [int(x) for x in re.findall(r'\d+', v1)]
-        v2p = [int(x) for x in re.findall(r'\d+', v2)]
-        for a, b in zip(v1p, v2p):
-            if a > b: return 1
-            if a < b: return -1
-        return 0
-
-    def _download_and_install(self):
-        try:
-            fd, self.temp_path = tempfile.mkstemp(suffix=".exe")
-            os.close(fd)
-
-            self.log("Downloading update...")
-            r = requests.get(self.download_url, stream=True, timeout=60)
-            r.raise_for_status()
-            total = int(r.headers.get('content-length', 0))
-            downloaded = 0
-            chunk_size = 1024 * 1024
-
-            with open(self.temp_path, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total:
-                            percent = int(100 * downloaded / total)
-                            self.log(f"Downloading: {percent}%")
-
-            self.log("Download complete. Installing...")
-
-            current_exe = sys.executable
-            backup_exe = current_exe + ".backup"
-
-            if os.path.exists(backup_exe):
-                os.remove(backup_exe)
-            shutil.move(current_exe, backup_exe)
-            shutil.move(self.temp_path, current_exe)
-            os.chmod(current_exe, 0o755)
-
-            self.log("Update installed. Restarting...")
-            time.sleep(1.5)
-            subprocess.Popen([current_exe])
-            os._exit(0)
-
-        except Exception as e:
-            self.log(f"Update failed: {e}", "red")
-            backup_exe = sys.executable + ".backup"
-            if os.path.exists(backup_exe):
-                shutil.move(backup_exe, sys.executable)
-
-
-# --------------------------------------------------------------------------- #
-# ──────────────────────────────── STORAGE ────────────────────────────────── #
-# --------------------------------------------------------------------------- #
-class Storage:
-    def __init__(self):
-        self.trans_file = os.path.join(Config.STORAGE_DIR, "last_transaction_data.json")
-        self.robux_file = os.path.join(Config.STORAGE_DIR, "last_robux.json")
-
-    def _default_transactions(self) -> Dict[str, int]:
+    def default_transactions() -> Dict:
         keys = [
             "salesTotal", "purchasesTotal", "affiliateSalesTotal", "groupPayoutsTotal",
             "currencyPurchasesTotal", "premiumStipendsTotal", "tradeSystemEarningsTotal",
@@ -226,188 +220,139 @@ class Storage:
         ]
         return {k: 0 for k in keys}
 
-    def load_transactions(self) -> Dict[str, int]:
-        if not os.path.exists(self.trans_file):
-            default = self._default_transactions()
-            self.save_transactions(default)
-            return default
+    def load_transactions(self) -> Dict:
+        if not self.TRANS_FILE.exists():
+            data = self.default_transactions()
+            self.save_transactions(data)
+            return data
         try:
-            with open(self.trans_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return json.loads(self.TRANS_FILE.read_text())
         except Exception:
-            return self._default_transactions()
+            return self.default_transactions()
 
-    def save_transactions(self, data: Dict[str, int]):
-        tmp = self.trans_file + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, self.trans_file)
-        except Exception:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+    def save_transactions(self, data: Dict):
+        safe_write(self.TRANS_FILE, data)
 
     def load_robux(self) -> int:
-        if not os.path.exists(self.robux_file):
+        if not self.ROBUX_FILE.exists():
             return 0
         try:
-            with open(self.robux_file, "r", encoding="utf-8") as f:
-                return json.load(f).get("robux", 0)
+            return json.loads(self.ROBUX_FILE.read_text()).get("robux", 0)
         except Exception:
             return 0
 
     def save_robux(self, robux: int):
-        tmp = self.robux_file + ".tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"robux": robux}, f, indent=2)
-            os.replace(tmp, self.robux_file)
-        except Exception:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+        safe_write(self.ROBUX_FILE, {"robux": robux})
 
-
-# --------------------------------------------------------------------------- #
-# ────────────────────────────── ROBLOX API ─────────────────────────────── #
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Roblox API Client
+# ─────────────────────────────────────────────────────────────────────────────
 class RobloxAPI:
     def __init__(self, cookie: str):
         self.cookies = {".ROBLOSECURITY": cookie}
         self.user_id: Optional[int] = None
 
-    def authenticate(self) -> bool:
+    def _get(self, url: str) -> Optional[Dict]:
         try:
-            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated",
-                                     cookies=self.cookies, timeout=10)
-            if r.status_code == 200:
-                self.user_id = r.json().get("id")
-                return True
-        except Exception:
-            pass
+            r = rate_limited_request("GET", url, cookies=self.cookies, timeout=10)
+            return r.json() if r.status_code == 200 else None
+        except Exception as e:
+            log.debug(f"API request failed: {e}")
+            return None
+
+    def authenticate(self) -> bool:
+        data = self._get("https://users.roblox.com/v1/users/authenticated")
+        if data and (uid := data.get("id")):
+            self.user_id = uid
+            log.info(Colors.colorize(f"Authenticated as user ID: {uid}", Colors.CYAN))
+            return True
+        log.error(Colors.colorize("Authentication failed.", Colors.RED))
         return False
 
-    def get_transaction_totals(self, timeframe: str) -> Optional[Dict[str, int]]:
-        if not self.user_id: return None
+    def get_transaction_totals(self, timeframe: str) -> Optional[Dict]:
+        if not self.user_id:
+            return None
         url = f"https://economy.roblox.com/v2/users/{self.user_id}/transaction-totals"
         params = {"timeFrame": timeframe, "transactionType": "summary"}
         r = rate_limited_request("GET", url, cookies=self.cookies, params=params, timeout=10)
         return r.json() if r.status_code == 200 else None
 
     def get_robux(self) -> Optional[int]:
-        if not self.user_id: return None
-        r = rate_limited_request("GET",
-                                 f"https://economy.roblox.com/v1/users/{self.user_id}/currency",
-                                 cookies=self.cookies, timeout=10)
-        return r.json().get("robux") if r.status_code == 200 else None
+        if not self.user_id:
+            return None
+        data = self._get(f"https://economy.roblox.com/v1/users/{self.user_id}/currency")
+        return data.get("robux") if data else None
 
-    def get_account_status(self) -> Optional[Dict[str, Any]]:
-        if not self.user_id: return None
-        r = rate_limited_request("GET",
-                                 f"https://users.roblox.com/v1/users/{self.user_id}",
-                                 cookies=self.cookies, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "is_banned": data.get("isBanned", False),
-                "username": data.get("name", "Unknown"),
-                "created": data.get("created", "Unknown")
-            }
-        return None
+    def get_account_status(self) -> Optional[Dict]:
+        if not self.user_id:
+            return None
+        data = self._get(f"https://users.roblox.com/v1/users/{self.user_id}")
+        if not data:
+            return None
+        return {
+            "is_banned": data.get("isBanned", False),
+            "username": data.get("name", "Unknown"),
+            "created": data.get("created", "Unknown")
+        }
 
-
-# --------------------------------------------------------------------------- #
-# ─────────────────────────── DISCORD NOTIFIER ──────────────────────────── #
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Discord Notifier
+# ─────────────────────────────────────────────────────────────────────────────
 class DiscordNotifier:
-    def __init__(self, url: str, emoji_name: str, emoji_id: str):
-        self.url = url
-        self.emoji = f"<:{emoji_name}:{emoji_id}>" if emoji_name and emoji_id else "Robux"
+    def __init__(self, webhook_url: str, emoji_name: str, emoji_id: str):
+        self.url = webhook_url
+        self.emoji = f"<:{emoji_name}:{emoji_id}>" if emoji_id else ""
 
-    def _send(self, embed: dict):
+    def _send(self, payload: Dict):
         if not self.url or "discord.com" not in self.url:
             return
         try:
-            r = rate_limited_request("POST", self.url, json={"embeds": [embed]}, timeout=10)
-            r.raise_for_status()
+            rate_limited_request("POST", self.url, json=payload, timeout=10)
         except Exception:
             pass
 
+    def embed(self, title: str, color: int, fields: list, timestamp: bool = True):
+        embed = {"title": title, "color": color, "fields": fields}
+        if timestamp:
+            embed["timestamp"] = datetime.now(timezone.utc).isoformat()
+        self._send({"embeds": [embed]})
+
     def transaction_change(self, changes: Dict[str, tuple]):
         fields = [
-            {
-                "name": k,
-                "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}",
-                "inline": False
-            }
+            {"name": k, "value": f"From {self.emoji} {abbreviate_number(old)} → {self.emoji} {abbreviate_number(new)}", "inline": False}
             for k, (old, new) in changes.items()
         ]
-        self._send({
-            "title": "Transaction Updated",
-            "color": 0x00ff00,
-            "fields": fields,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        self.embed("Transaction Updated", 0x00ff00, fields)
 
     def robux_change(self, old: int, new: int):
-        self._send({
-            "title": "Robux Balance Changed",
-            "color": 0x00ff00 if new > old else 0xff0000,
-            "fields": [
-                {"name": "Before", "value": f"{self.emoji} {abbreviate_number(old)}", "inline": True},
-                {"name": "After", "value": f"{self.emoji} {abbreviate_number(new)}", "inline": True}
-            ],
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        color = 0x00ff00 if new > old else 0xff0000
+        self.embed("Robux Balance Changed", color, [
+            {"name": "Before", "value": f"{self.emoji} {abbreviate_number(old)}", "inline": True},
+            {"name": "After", "value": f"{self.emoji} {abbreviate_number(new)}", "inline": True}
+        ])
 
-    def account_status(self, status: dict, previous: Optional[dict] = None):
-        if previous and previous == status:
+    def account_status(self, status: Dict, previous: Optional[Dict]):
+        if previous == status:
             return
         color = 0xff0000 if status.get("is_banned") else 0x00ff00
-        self._send({
-            "title": f"Account {'BANNED' if status.get('is_banned') else 'ACTIVE'}",
-            "description": "Status changed!",
-            "color": color,
-            "fields": [
-                {"name": "User", "value": status.get("username", "Unknown"), "inline": True},
-                {"name": "Created", "value": status.get("created", "Unknown"), "inline": True}
-            ],
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+        self.embed(
+            "ACCOUNT BANNED" if status.get("is_banned") else "ACCOUNT ACTIVE",
+            color,
+            [
+                {"name": "User", "value": status["username"], "inline": True},
+                {"name": "Created", "value": status["created"], "inline": True}
+            ]
+        )
 
     def api_downtime(self, status: str, duration: Optional[float] = None):
-        color = 0x00ff00 if status == "RECOVERED" else 0xff0000
-        title = "API Recovered" if status == "RECOVERED" else "API Down"
-        desc = f"Recovered after {duration:.1f}s" if duration else "Monitoring paused"
-        self._send({"title": title, "description": desc, "color": color,
-                    "timestamp": datetime.now(timezone.utc).isoformat()})
+        color = 0xff0000 if status == "DOWN" else 0x00ff00
+        fields = [{"name": "Duration", "value": f"{duration:.1f}s", "inline": False}] if duration else []
+        self.embed(f"Roblox API {status}", color, fields)
 
-
-# --------------------------------------------------------------------------- #
-# ──────────────────────── WINUI 3 + pythonnet (2025) ───────────────────── #
-# --------------------------------------------------------------------------- #
-try:
-    import clr
-    clr.AddReference("System.Runtime")
-    clr.AddReference("System.Collections")
-    clr.AddReference("Microsoft.UI.Xaml")
-    clr.AddReference("Microsoft.UI.Xaml.Hosting")
-    clr.AddReference("Microsoft.UI.Xaml.Controls")
-    clr.AddReference("Microsoft.UI.Dispatching")
-    from Microsoft.UI.Xaml import Application, Window, Thickness
-    from Microsoft.UI.Xaml.Controls import (
-        StackPanel, TextBlock, TextBox, Button, ComboBox, ComboBoxItem,
-        ScrollViewer, ListView, ListViewItem, Flyout, MenuFlyout, MenuFlyoutItem
-    )
-    from Microsoft.UI.Xaml.Hosting import WindowsXamlManager
-    from Microsoft.UI.Dispatching import DispatcherQueueController
-    from Microsoft.UI import Colors
-    WINUI_AVAILABLE = True
-except Exception as e:
-    WINUI_AVAILABLE = False
-    print(f"WinUI 3 not available: {e}")
-    sys.exit(1)
-
-class MainWindow:
+# ─────────────────────────────────────────────────────────────────────────────
+# Monitor Core
+# ─────────────────────────────────────────────────────────────────────────────
+class Monitor:
     def __init__(self):
         self.config = Config()
         self.storage = Storage()
@@ -417,308 +362,188 @@ class MainWindow:
             self.config["DISCORD_EMOJI_NAME"],
             self.config["DISCORD_EMOJI_ID"]
         )
-        self.updater = AutoUpdater(self.log)
         self.stop_event = threading.Event()
-        self.monitor_thread: Optional[threading.Thread] = None
-        self.last_status: Optional[Dict[str, Any]] = None
+        self.last_status: Optional[Dict] = None
         self.downtime_start: Optional[float] = None
-        self._start_time = 0.0
 
-        # WinUI setup
-        self.dispatcher = DispatcherQueueController.CreateOnCurrentThread()
-        WindowsXamlManager.InitializeForCurrentThread()
-        self.app = Application.Start(lambda _: None)
-        self.window = Window()
-        self.window.Title = "Roblox Transaction & Robux Monitor"
-        self.window.SetTitleBar(None)
+    def start(self):
+        log.info(Colors.colorize("Roblox Transaction & Robux Monitor (CLI)", Colors.BOLD + Colors.MAGENTA))
+        self.config.summary()
 
-        # Root panel
-        root = StackPanel()
-        root.Margin = Thickness(16)
-        root.Spacing = 12
-
-        # Status labels
-        self.lbl_user = TextBlock()
-        self.lbl_user.Text = "User: -"
-        self.lbl_robux = TextBlock()
-        self.lbl_robux.Text = "Robux: -"
-        self.lbl_status = TextBlock()
-        self.lbl_status.Text = "Status: -"
-        self.lbl_next = TextBlock()
-        self.lbl_next.Text = "Next check: -"
-
-        for lbl in [self.lbl_user, self.lbl_robux, self.lbl_status, self.lbl_next]:
-            lbl.FontSize = 14
-            root.Children.Append(lbl)
-
-        # Log viewer
-        self.log_list = ListView()
-        self.log_list.Height = 400
-        scroll = ScrollViewer()
-        scroll.Content = self.log_list
-        root.Children.Append(scroll)
-
-        # Buttons
-        btn_update = Button()
-        btn_update.Content = "Check Update"
-        btn_update.Click += lambda s, e: self.updater.check_and_update(manual=True)
-
-        btn_config = Button()
-        btn_config.Content = "Config"
-        btn_config.Click += lambda s, e: self.show_config_flyout(btn_config)
-
-        btn_exit = Button()
-        btn_exit.Content = "Exit"
-        btn_exit.Click += lambda s, e: self.close()
-
-        btn_panel = StackPanel()
-        btn_panel.Orientation = 0  # Horizontal
-        btn_panel.Spacing = 8
-        btn_panel.Children.Append(btn_update)
-        btn_panel.Children.Append(btn_config)
-        btn_panel.Children.Append(btn_exit)
-        root.Children.Append(btn_panel)
-
-        self.window.Content = root
-        self.window.Activate()
-
-        # Start monitoring
-        threading.Thread(target=self.check_first_run, daemon=True).start()
-
-    def log(self, msg: str, color: str = ""):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {msg}"
-        item = ListViewItem()
-        item.Content = line
-        self.log_list.Items.Append(item)
-        # Auto-scroll
-        if self.log_list.Items.Count > 0:
-            self.log_list.ScrollIntoView(self.log_list.Items[self.log_list.Items.Count - 1])
-
-    def update_label(self, lbl, text: str):
-        lbl.Text = text
-
-    def show_config_flyout(self, button):
-        flyout = Flyout()
-
-        panel = StackPanel()
-        panel.Spacing = 8
-        panel.Margin = Thickness(12)
-
-        # Helper to create field
-        def add_field(label_text, key, is_password=False):
-            tb = TextBlock()
-            tb.Text = label_text
-            panel.Children.Append(tb)
-            box = TextBox()
-            box.Text = self.config[key]
-            box.IsPassword = is_password
-            box.Tag = key
-            panel.Children.Append(box)
-            return box
-
-        webhook_box = add_field("Discord Webhook URL:", "DISCORD_WEBHOOK_URL")
-        cookie_box = add_field(".ROBLOSECURITY Cookie:", "ROBLOSECURITY", True)
-        emoji_id_box = add_field("Emoji ID:", "DISCORD_EMOJI_ID")
-        emoji_name_box = add_field("Emoji Name:", "DISCORD_EMOJI_NAME")
-        interval_box = add_field("Check Interval (seconds):", "CHECK_INTERVAL")
-        
-        timeframe_combo = ComboBox()
-        timeframe_combo.Header = "Timeframe:"
-        for opt in ["Day", "Week", "Month", "Year"]:
-            item = ComboBoxItem()
-            item.Content = opt
-            item.IsSelected = (opt == self.config["TOTAL_CHECKS_TYPE"])
-            timeframe_combo.Items.Append(item)
-        panel.Children.Append(timeframe_combo)
-
-        save_btn = Button()
-        save_btn.Content = "Save"
-        save_btn.Click += lambda s, e: self.save_config_from_flyout(
-            webhook_box, cookie_box, emoji_id_box, emoji_name_box,
-            interval_box, timeframe_combo, flyout
-        )
-        panel.Children.Append(save_btn)
-
-        flyout.Content = panel
-        flyout.ShowAt(button)
-
-    def save_config_from_flyout(self, webhook_box, cookie_box, emoji_id_box, emoji_name_box,
-                                interval_box, timeframe_combo, flyout):
-        self.config["DISCORD_WEBHOOK_URL"] = webhook_box.Text
-        self.config["ROBLOSECURITY"] = cookie_box.Text
-        self.config["DISCORD_EMOJI_ID"] = emoji_id_box.Text
-        self.config["DISCORD_EMOJI_NAME"] = emoji_name_box.Text
-        self.config["CHECK_INTERVAL"] = interval_box.Text or "180"
-        self.config["TOTAL_CHECKS_TYPE"] = next(
-            (item.Content for item in timeframe_combo.Items if item.IsSelected), "Day"
-        )
-
-        self.api = RobloxAPI(self.config["ROBLOSECURITY"])
-        self.notifier = DiscordNotifier(
-            self.config["DISCORD_WEBHOOK_URL"],
-            self.config["DISCORD_EMOJI_NAME"],
-            self.config["DISCORD_EMOJI_ID"]
-        )
-        self.log("Configuration saved.", "green")
-        flyout.Hide()
-
-    def check_first_run(self):
-        time.sleep(0.5)  # Let UI settle
-        if not self.config["ROBLOSECURITY"]:
-            self.log("First run – opening setup...", "orange")
-            # Reuse config flyout logic
-            dummy_btn = Button()
-            self.show_config_flyout(dummy_btn)
-            self.config = Config()
-            self.api = RobloxAPI(self.config["ROBLOSECURITY"])
-            self.notifier = DiscordNotifier(
-                self.config["DISCORD_WEBHOOK_URL"],
-                self.config["DISCORD_EMOJI_NAME"],
-                self.config["DISCORD_EMOJI_ID"]
-            )
-
-        if not self.config["ROBLOSECURITY"].startswith("_|WARNING"):
-            from Microsoft.UI.Xaml.Controls import ContentDialog, ContentDialogButton
-            dialog = ContentDialog()
-            dialog.Title = "Invalid Cookie"
-            dialog.Content = (
-                f".ROBLOSECURITY must start with \"_|WARNING\"\n\n"
-                f"Current: {self.config['ROBLOSECURITY'][:50]}{'...' if len(self.config['ROBLOSECURITY']) > 50 else ''}\n\n"
-                f"Config: {Config.CONFIG_FILE}"
-            )
-            dialog.CloseButtonText = "Exit"
-            dialog.ShowAsync()
-            sys.exit(1)
-
-        self.start_monitoring()
-        self.updater.check_and_update()
-
-    def start_monitoring(self):
         if not self.api.authenticate():
-            self.log("Authentication failed – check cookie.", "red")
+            log.error(Colors.colorize("Cannot start: Invalid or expired .ROBLOSECURITY cookie.", Colors.RED))
             return
-        self.update_label(self.lbl_user, f"User: {self.api.user_id}")
-        self.log(f"Authenticated as user ID: {self.api.user_id}")
-        self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
-        self.monitor_thread.start()
 
-        # Timer via Dispatcher
-        from System import TimeSpan
-        timer = self.dispatcher.CreateTimer()
-        timer.Interval = TimeSpan.FromSeconds(1)
-        timer.Tick += lambda s, e: self._timer_tick()
-        timer.Start()
+        if not self.config.validate_cookie():
+            return
 
-    def monitor_loop(self):
+        log.info(Colors.colorize("Monitoring started. Press Ctrl+C to stop.", Colors.GREEN))
+        signal.signal(signal.SIGINT, self._signal_handler)
+
         while not self.stop_event.is_set():
             try:
-                if not self._check_api():
+                if not self._check_api_health():
                     self._wait()
                     continue
                 self._check_transactions()
                 self._check_robux()
                 self._check_account_status()
             except Exception as e:
-                self.log(f"Unexpected error: {e}", "red")
+                log.error(f"Unexpected error: {e}")
             self._wait()
 
-    def _check_api(self) -> bool:
+    # --------------------------------------------------------------------- #
+    # API Health
+    # --------------------------------------------------------------------- #
+    def _check_api_health(self) -> bool:
         try:
-            r = rate_limited_request(
-                "GET", "https://users.roblox.com/v1/users/authenticated",
-                cookies=self.api.cookies, timeout=10)
+            r = rate_limited_request("GET", "https://users.roblox.com/v1/users/authenticated", cookies=self.api.cookies, timeout=10)
             if r.status_code == 200:
                 if self.downtime_start:
                     duration = time.time() - self.downtime_start
                     self.notifier.api_downtime("RECOVERED", duration)
-                    self.log(f"API recovered after {duration:.1f}s", "green")
+                    log.info(Colors.colorize(f"API recovered after {duration:.1f}s", Colors.GREEN))
                     self.downtime_start = None
                 return True
         except Exception:
             pass
+
         if not self.downtime_start:
             self.downtime_start = time.time()
-            self.notifier.api_downtime("STARTED")
-            self.log("Roblox API unreachable – retrying...", "red")
+            self.notifier.api_downtime("DOWN")
+            log.warning(Colors.colorize("Roblox API unreachable. Retrying...", Colors.RED))
         return False
 
+    # --------------------------------------------------------------------- #
+    # Transactions
+    # --------------------------------------------------------------------- #
     def _check_transactions(self):
         data = self.api.get_transaction_totals(self.config["TOTAL_CHECKS_TYPE"])
-        if not data: return
+        if not data:
+            return
         last = self.storage.load_transactions()
         changes = {k: (last.get(k, 0), v) for k, v in data.items() if v != last.get(k, 0)}
         if changes:
+            log.info(Colors.colorize("Transaction changes detected:", Colors.YELLOW))
             for k, (o, n) in changes.items():
-                self.log(f"{k}: {abbreviate_number(o)} to {abbreviate_number(n)}")
+                log.info(f"{Colors.CYAN}{k}: {abbreviate_number(o)} → {abbreviate_number(n)}{Colors.RESET}")
             self.notifier.transaction_change(changes)
             self.storage.save_transactions(data)
 
+    # --------------------------------------------------------------------- #
+    # Robux
+    # --------------------------------------------------------------------- #
     def _check_robux(self):
         robux = self.api.get_robux()
-        if robux is None: return
+        if robux is None:
+            return
         last = self.storage.load_robux()
         if robux != last:
             change = "Increased" if robux > last else "Decreased"
-            self.log(f"Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}")
-            self.update_label(self.lbl_robux, f"Robux: {abbreviate_number(robux)}")
+            log.info(Colors.colorize(f"Robux {change}: {abbreviate_number(last)} → {abbreviate_number(robux)}", Colors.MAGENTA))
             self.notifier.robux_change(last, robux)
             self.storage.save_robux(robux)
 
+    # --------------------------------------------------------------------- #
+    # Account Status
+    # --------------------------------------------------------------------- #
     def _check_account_status(self):
         status = self.api.get_account_status()
-        if not status: return
+        if not status:
+            return
         if self.last_status != status:
-            banned = status.get("is_banned", False)
-            color = "red" if banned else "green"
-            self.log(f"Account {'BANNED' if banned else 'ACTIVE'}: {status['username']}", color)
-            self.update_label(self.lbl_status, f"Status: {'BANNED' if banned else 'ACTIVE'}")
+            banned = status["is_banned"]
+            colour = Colors.RED if banned else Colors.GREEN
+            log.info(Colors.colorize(f"Account {'BANNED' if banned else 'ACTIVE'}: {status['username']}", colour))
             self.notifier.account_status(status, self.last_status)
             self.last_status = status
 
-    def _timer_tick(self):
-        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
-        remaining = self._remaining_seconds()
-        mins, secs = divmod(remaining, 60)
-        self.update_label(self.lbl_next, f"Next check in {mins:02d}:{secs:02d}")
-
+    # --------------------------------------------------------------------- #
+    # Wait Loop
+    # --------------------------------------------------------------------- #
     def _wait(self):
-        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
-        self._start_time = time.time()
-        for _ in range(interval):
+        interval = max(10, int(self.config["CHECK_INTERVAL"] or 60))
+        log.info(f"Waiting {interval}s until next check...")
+        for remaining in range(interval, 0, -1):
             if self.stop_event.is_set():
                 break
+            mins, secs = divmod(remaining, 60)
+            # Use carriage-return to overwrite the line (same UX as before)
+            print(f"\r{Colors.BLUE}Next check in {mins:02d}:{secs:02d}{Colors.RESET}", end="", flush=True)
             time.sleep(1)
+        print()  # final newline after countdown
 
-    def _remaining_seconds(self):
-        if not self._start_time:
-            return 0
-        elapsed = time.time() - self._start_time
-        interval = max(10, int(self.config.get("CHECK_INTERVAL", 180)))
-        return max(0, interval - int(elapsed))
-
-    def close(self):
+    # --------------------------------------------------------------------- #
+    # Signal Handler
+    # --------------------------------------------------------------------- #
+    def _signal_handler(self, signum, frame):
+        log.warning(Colors.colorize(f"Shutting down... (signal {signum} | frame {frame})", Colors.YELLOW))
         self.stop_event.set()
-        if self.monitor_thread and self.monitor_thread.is_alive():
-            self.monitor_thread.join(timeout=2)
-        self.window.Close()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Setup Wizard
+# ─────────────────────────────────────────────────────────────────────────────
+class SetupWizard:
+    def __init__(self):
+        self.config = Config()
+        self.monitor = Monitor()
+        self.update = UpdateChecker()
 
-# --------------------------------------------------------------------------- #
-# ────────────────────────────────── ENTRY ────────────────────────────────── #
-# --------------------------------------------------------------------------- #
+    def run(self):
+        self.update.check()
+
+        if not self.config["ROBLOSECURITY"]:
+            self._first_time_setup()
+            log.info(Colors.colorize(f"Edit config later: {Paths.CONFIG_FILE}", Colors.CYAN))
+            return
+
+        if not self.config.validate_cookie():
+            return
+
+        self.monitor.start()
+
+    def _first_time_setup(self):
+        log.info(Colors.colorize("Roblox Monitor CLI - First Time Setup", Colors.BOLD + Colors.CYAN))
+        log.info("Enter the following details (some input is hidden for security):")
+
+        prompts = [
+            ("Discord Webhook URL (Hidden)", getpass),
+            (".ROBLOSECURITY Cookie (Hidden)", getpass),
+            ("Emoji ID", input),
+            ("Emoji Name", input),
+            ("Check Interval (seconds, default: 60)", input),
+            ("Timeframe (Day/Week/Month/Year, default: Day)", input)
+        ]
+        defaults = ["", "", "", "", "60", "Day"]
+
+        values = []
+        for prompt, reader in prompts:
+            try:
+                val = reader(f"{Colors.YELLOW}{prompt}:{Colors.RESET}").strip()
+                values.append(val)
+            except (KeyboardInterrupt, EOFError):
+                reader(f"\n{Colors.YELLOW}Setup interrupted by user (Press Ctrl+C Again).{Colors.RESET}\n").strip()
+
+        keys = [
+            "DISCORD_WEBHOOK_URL", "ROBLOSECURITY", "DISCORD_EMOJI_ID",
+            "DISCORD_EMOJI_NAME", "CHECK_INTERVAL", "TOTAL_CHECKS_TYPE"
+        ]
+
+        for k, v, d in zip(keys, values, defaults):
+            self.config[k] = v or d
+
+        log.info(Colors.colorize(f"Config saved securely to {Paths.CONFIG_FILE}", Colors.GREEN))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry Point
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    if not sys.platform.startswith("win"):
-        print("This script requires Windows.")
-        sys.exit(1)
-
-    # Ensure WinUI 3 runtime is available (Windows 10 1809+ or Windows 11)
     try:
-        app = MainWindow()
-        # Keep Python alive while WinUI runs
-        import time
-        while not app.stop_event.is_set():
-            time.sleep(0.1)
+        Setup = SetupWizard()
+        Setup.run()
+    except KeyboardInterrupt:
+        log.warning(Colors.colorize("Aborted by user.", Colors.YELLOW))
+        raise SystemExit(1)
     except Exception as e:
-        print(f"Failed to start WinUI: {e}")
-        sys.exit(1)
+        log.critical(Colors.colorize(f"Fatal error: {e}", Colors.RED))
+        raise SystemExit(1)
