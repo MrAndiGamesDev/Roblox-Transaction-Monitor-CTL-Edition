@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Roblox Transaction & Robux Monitor – PyQt + SQLite Edition (with Dark Mode)
-Author: MrAndiGamesDev (Refactored + Dark Mode by Grok)
-Secure, real-time monitoring with SQLite persistence + Dark Mode.
+Roblox Transaction & Robux Monitor – PyQt + SQLite Edition
+Author: MrAndiGamesDev (Refactored)
+Secure, real-time monitoring with SQLite persistence.
 """
 import json
 import time
@@ -11,6 +11,7 @@ import threading
 import logging
 import requests
 import sys
+import webbrowser
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,67 +22,9 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QLineEdit, QDialog, QDialogButtonBox,
     QFormLayout, QMessageBox, QFrame
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot
-from PyQt5.QtGui import QFont, QTextCursor, QPalette, QColor
-
-# -------------------------------------------------------------------------
-# DARK MODE SUPPORT (ctypes)
-# -------------------------------------------------------------------------
-def is_windows_dark_mode() -> bool:
-    """Detect if Windows is using dark mode via undocumented DWM attribute."""
-    try:
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 11), 19 (Windows 10)
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        hwnd = ctypes.windll.user32.GetDesktopWindow()
-        result = ctypes.c_int(0)
-        ctypes.windll.dwmapi.DwmGetWindowAttribute(
-            hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-            ctypes.byref(result), ctypes.sizeof(result)
-        )
-        return bool(result.value)
-    except Exception:
-        try:
-            # Fallback to older attribute
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 19
-            hwnd = ctypes.windll.user32.GetDesktopWindow()
-            result = ctypes.c_int(0)
-            ctypes.windll.dwmapi.DwmGetWindowAttribute(
-                hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                ctypes.byref(result), ctypes.sizeof(result)
-            )
-            return bool(result.value)
-        except Exception:
-            return False  # Assume light mode on failure
-
-
-def apply_dark_mode(app: QApplication, dark: bool):
-    """Apply dark or light palette to the entire Qt application."""
-    palette = QPalette()
-
-    if dark:
-        # Modern dark palette
-        palette.setColor(QPalette.Window, QColor(30, 30, 30))
-        palette.setColor(QPalette.WindowText, QColor(255, 255, 255))
-        palette.setColor(QPalette.Base, QColor(25, 25, 25))
-        palette.setColor(QPalette.AlternateBase, QColor(35, 35, 35))
-        palette.setColor(QPalette.ToolTipBase, QColor(255, 255, 180))
-        palette.setColor(QPalette.ToolTipText, QColor(0, 0, 0))
-        palette.setColor(QPalette.Text, QColor(255, 255, 255))
-        palette.setColor(QPalette.Button, QColor(50, 50, 50))
-        palette.setColor(QPalette.ButtonText, QColor(255, 255, 255))
-        palette.setColor(QPalette.BrightText, QColor(255, 0, 0))
-        palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
-        palette.setColor(QPalette.Disabled, QPalette.Text, QColor(128, 128, 128))
-        palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(128, 128, 128))
-    else:
-        # Default light palette
-        app.setStyle("Windows11")  # Use Windows 11 native style
-        palette = QPalette()  # Use system default
-
-    app.setPalette(palette)
-
+from PyQt5.QtCore import QThread, pyqtSignal, QObject, pyqtSlot
+from PyQt5.QtGui import QFont, QTextCursor
+from Core.Icon_manager import GetAppIcon
 
 # -------------------------------------------------------------------------
 # Paths & SQLite DB
@@ -94,7 +37,6 @@ class Paths:
     @classmethod
     def ensure_dirs(cls):
         cls.APP_DIR.mkdir(mode=0o700, exist_ok=True)
-
 
 class Database:
     def __init__(self, db_path: Path):
@@ -176,7 +118,6 @@ class Database:
                 self.upsert_transaction(k, v)
         return changes
 
-
 # -------------------------------------------------------------------------
 # Logging
 # -------------------------------------------------------------------------
@@ -194,7 +135,6 @@ class GUILogHandler(logging.Handler, QObject):
         msg = self.formatter.format(record)
         self.new_record.emit(msg + "\n")
 
-
 # -------------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------------
@@ -204,7 +144,6 @@ def abbreviate_number(num: int) -> str:
         if abs_num >= limit:
             return f"{num/limit:.2f}{suffix}"
     return str(num)
-
 
 class SecureInput:
     @staticmethod
@@ -220,7 +159,6 @@ class SecureInput:
     @staticmethod
     def cookie(cookie: str) -> str:
         return SecureInput.censor(cookie, show_start=35, show_end=8) if cookie else ""
-
 
 # -------------------------------------------------------------------------
 # Rate Limiter + Safe API
@@ -239,9 +177,7 @@ class RateLimiter:
                 time.sleep(sleep_time)
             self.last_call = time.time()
 
-
 rate_limiter = RateLimiter()
-
 
 def safe_api_get(url: str, cookies: Dict[str, str], params: Optional[Dict] = None, timeout: int = 10, max_retries: int = 3) -> Optional[Dict]:
     for attempt in range(1, max_retries + 1):
@@ -267,7 +203,6 @@ def safe_api_get(url: str, cookies: Dict[str, str], params: Optional[Dict] = Non
             time.sleep(1.5 ** attempt)
     log.error(f"API call failed after {max_retries} retries: {url}")
     return None
-
 
 # -------------------------------------------------------------------------
 # Update Checker
@@ -297,7 +232,6 @@ class UpdateChecker:
         except Exception:
             return None
 
-
 # -------------------------------------------------------------------------
 # Config Manager (uses DB)
 # -------------------------------------------------------------------------
@@ -309,7 +243,6 @@ class Config:
         "DISCORD_EMOJI_NAME": "",
         "CHECK_INTERVAL": "60",
         "TOTAL_CHECKS_TYPE": "Day",
-        "DARK_MODE": "",  # "" = auto, "1" = dark, "0" = light
     }
 
     def __init__(self, db: Database):
@@ -326,7 +259,6 @@ class Config:
 
     def __setitem__(self, key, value):
         self.db.set_config(key, str(value))
-
 
 # -------------------------------------------------------------------------
 # Roblox API
@@ -370,7 +302,6 @@ class RobloxAPI:
             "created": data.get("created", "Unknown")
         }
 
-
 # -------------------------------------------------------------------------
 # Discord Notifier
 # -------------------------------------------------------------------------
@@ -395,7 +326,7 @@ class DiscordNotifier:
 
     def transaction_change(self, changes: Dict[str, tuple]):
         fields = [
-            {"name": k, "value": f"From {self.emoji} {abbreviate_number(old)} → {self.emoji} {abbreviate_number(new)}", "inline": False}
+            {"name": k, "value": f"From {self.emoji} {abbreviate_number(old)} to {self.emoji} {abbreviate_number(new)}", "inline": False}
             for k, (old, new) in changes.items()
         ]
         self.embed("Transaction Updated", 0x00ff00, fields)
@@ -424,7 +355,6 @@ class DiscordNotifier:
         color = 0xff0000 if status == "DOWN" else 0x00ff00
         fields = [{"name": "Duration", "value": f"{duration:.1f}s", "inline": False}] if duration else []
         self.embed(f"Roblox API {status}", color, fields)
-
 
 # -------------------------------------------------------------------------
 # Worker Thread
@@ -468,7 +398,7 @@ class MonitorWorker(QThread):
                 if self.downtime_start:
                     duration = time.time() - self.downtime_start
                     self.notifier.api_downtime("RECOVERED", duration)
-                    self.log_signal.emit(f"API recovered after {duration:.1f}s")
+                    self.log_signal.cmit(f"API recovered after {duration:.1f}s")
                     self.api_signal.emit("API: OK")
                     self.downtime_start = None
                 return True
@@ -489,7 +419,7 @@ class MonitorWorker(QThread):
         if changes:
             self.log_signal.emit("Transaction changes:")
             for k, (o, n) in changes.items():
-                self.log_signal.emit(f"  {k}: {abbreviate_number(o)} → {abbreviate_number(n)}")
+                self.log_signal.emit(f"  {k}: {abbreviate_number(o)} to {abbreviate_number(n)}")
             self.notifier.transaction_change(changes)
             self.sales_signal.emit(f"Sales: {abbreviate_number(data.get('salesTotal', 0))}")
 
@@ -500,7 +430,7 @@ class MonitorWorker(QThread):
         last = self.db.get_latest_robux() or 0
         if robux != last:
             change = "Increased" if robux > last else "Decreased"
-            self.log_signal.emit(f"Robux {change}: {abbreviate_number(last)} → {abbreviate_number(robux)}")
+            self.log_signal.emit(f"Robux {change}: {abbreviate_number(last)} to {abbreviate_number(robux)}")
             self.notifier.robux_change(last, robux)
             self.db.log_robux(robux)
             self.robux_signal.emit(f"Robux: {abbreviate_number(robux)}")
@@ -524,7 +454,6 @@ class MonitorWorker(QThread):
             self.timer_signal.emit(f"Next check: {mins:02d}:{secs:02d}")
             time.sleep(1)
         self.timer_signal.emit("Next check: —")
-
 
 # -------------------------------------------------------------------------
 # Config Editor
@@ -566,7 +495,6 @@ class ConfigEditor(QDialog):
         if self.callback:
             self.callback()
 
-
 # -------------------------------------------------------------------------
 # UI & Main Window
 # -------------------------------------------------------------------------
@@ -580,12 +508,12 @@ def _styled_label(text: str, bold: bool = False) -> QLabel:
     lbl.setFont(font)
     return lbl
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         Paths.ensure_dirs()
         self.db = Database(Paths.DB_FILE)
+        self.appicon = GetAppIcon()
         self.config = Config(self.db)
         self.api = RobloxAPI(self.config["ROBLOSECURITY"])
         self.notifier = DiscordNotifier(
@@ -596,6 +524,7 @@ class MainWindow(QMainWindow):
         self.worker: Optional[MonitorWorker] = None
         self.log_handler = GUILogHandler()
         self.log_handler.new_record.connect(self.append_log)
+        self.appicon.set_app_icon("Robux")
         self._setup_ui()
         self.check_update()
         self.validate_and_start()
@@ -615,9 +544,9 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         hlayout.addWidget(title)
         hlayout.addStretch()
-        self.update_label = QLabel("")
-        self.update_label.setOpenExternalLinks(True)
-        hlayout.addWidget(self.update_label)
+        self.update_btn = QPushButton("Check Update")
+        self.update_btn.clicked.connect(self.open_update_url)
+        hlayout.addWidget(self.update_btn)
         layout.addWidget(header)
 
         # Status
@@ -651,11 +580,8 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_monitoring)
         self.config_btn = QPushButton("Edit Config")
         self.config_btn.clicked.connect(self.edit_config)
-        self.dark_btn = QPushButton("Dark Mode: Auto")
-        self.dark_btn.clicked.connect(self.toggle_dark_mode)
         clayout.addWidget(self.start_btn)
         clayout.addWidget(self.config_btn)
-        clayout.addWidget(self.dark_btn)
         clayout.addStretch()
         layout.addWidget(control_frame)
 
@@ -671,41 +597,19 @@ class MainWindow(QMainWindow):
         log.setLevel(logging.INFO)
         log.addHandler(self.log_handler)
 
-    def update_dark_button(self):
-        mode = self.config["DARK_MODE"]
-        if mode == "":
-            self.dark_btn.setText("Dark Mode: Auto")
-        elif mode == "1":
-            self.dark_btn.setText("Dark Mode: On")
-        else:
-            self.dark_btn.setText("Dark Mode: Off")
-
-    def toggle_dark_mode(self):
-        current = self.config["DARK_MODE"]
-        if current == "":
-            self.config["DARK_MODE"] = "0"
-        elif current == "0":
-            self.config["DARK_MODE"] = "1"
-        else:
-            self.config["DARK_MODE"] = ""
-        self.apply_dark_mode()
-        self.update_dark_button()
-
-    def apply_dark_mode(self):
-        mode = self.config["DARK_MODE"]
-        if mode == "":
-            dark = is_windows_dark_mode()
-        else:
-            dark = mode == "1"
-        apply_dark_mode(QApplication.instance(), dark)
-
     def check_update(self):
         update = UpdateChecker.check()
         if update:
             latest, url = update
-            self.update_label.setText(
-                f'<a href="{url}">Update: {latest} → Download</a>'
-            )
+            self.update_url = url
+            self.update_btn.setText(f"Update: {latest}")
+        else:
+            self.update_btn.setText("Check Update")
+            self.update_url = None
+
+    def open_update_url(self):
+        if hasattr(self, 'update_url') and self.update_url:
+            webbrowser.open(self.update_url)
 
     def validate_and_start(self):
         if not self.config["ROBLOSECURITY"]:
@@ -740,8 +644,7 @@ class MainWindow(QMainWindow):
             log.info("Monitoring started.")
 
     def edit_config(self, first_run=False):
-        dlg = ConfigEditor(self, self.config,
-                           callback=lambda: self.validate_and_start() if first_run else None)
+        dlg = ConfigEditor(self, self.config, callback=lambda: self.validate_and_start() if first_run else None)
         dlg.exec_()
 
     @pyqtSlot(str)
@@ -749,7 +652,6 @@ class MainWindow(QMainWindow):
         self.log_text.moveCursor(QTextCursor.End)
         self.log_text.insertPlainText(text)
         self.log_text.moveCursor(QTextCursor.End)
-
 
 # -------------------------------------------------------------------------
 # Entry Point
@@ -760,20 +662,9 @@ def _enable_high_dpi():
     except (AttributeError, OSError):
         pass
 
-
-def main():
+if __name__ == "__main__":
     _enable_high_dpi()
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")  # Consistent look
-
     win = MainWindow()
     win.show()
-
-    # Apply dark mode on startup
-    win.apply_dark_mode()
-    win.update_dark_button()
-
     sys.exit(app.exec_())
-
-if __name__ == "__main__":
-    main()
