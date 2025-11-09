@@ -7,8 +7,6 @@ Secure, real-time monitoring with SQLite persistence.
 
 import json
 import time
-import signal
-import webbrowser
 import ctypes
 import threading
 import logging
@@ -25,24 +23,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QMessageBox, QFrame
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject, pyqtSlot
-from PyQt5.QtGui import QFont, QPalette, QColor, QTextCursor
-
-# -------------------------------------------------------------------------
-# Theme
-# -------------------------------------------------------------------------
-THEME = {
-    "bg_main": "#1e1e1e",
-    "bg_header": "#2d2d2d",
-    "bg_status": "#252525",
-    "bg_log": "#0f0f0f",
-    "fg_primary": "#ffffff",
-    "fg_success": "#00ff00",
-    "fg_warning": "#ffff00",
-    "fg_error": "#ff5555",
-    "fg_timer": "#00bfff",
-    "fg_sales": "#00ff88",
-    "link": "#ffff00",
-}
+from PyQt5.QtGui import QFont, QTextCursor
 
 # -------------------------------------------------------------------------
 # Paths & SQLite DB
@@ -55,7 +36,6 @@ class Paths:
     @classmethod
     def ensure_dirs(cls):
         cls.APP_DIR.mkdir(mode=0o700, exist_ok=True)
-
 
 class Database:
     def __init__(self, db_path: Path):
@@ -139,7 +119,6 @@ class Database:
                 self.upsert_transaction(k, v)
         return changes
 
-
 # -------------------------------------------------------------------------
 # Logging
 # -------------------------------------------------------------------------
@@ -156,7 +135,6 @@ class GUILogHandler(logging.Handler, QObject):
     def emit(self, record):
         msg = self.formatter.format(record)
         self.new_record.emit(msg + "\n")
-
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -184,7 +162,6 @@ class SecureInput:
     def cookie(cookie: str) -> str:
         return SecureInput.censor(cookie, show_start=35, show_end=8) if cookie else ""
 
-
 # -------------------------------------------------------------------------
 # Rate Limiter + Safe API
 # -------------------------------------------------------------------------
@@ -202,9 +179,7 @@ class RateLimiter:
                 time.sleep(sleep_time)
             self.last_call = time.time()
 
-
 rate_limiter = RateLimiter()
-
 
 def safe_api_get(url: str, cookies: Dict[str, str], params: Optional[Dict] = None, timeout: int = 10, max_retries: int = 3) -> Optional[Dict]:
     for attempt in range(1, max_retries + 1):
@@ -230,7 +205,6 @@ def safe_api_get(url: str, cookies: Dict[str, str], params: Optional[Dict] = Non
             time.sleep(1.5 ** attempt)
     log.error(f"API call failed after {max_retries} retries: {url}")
     return None
-
 
 # -------------------------------------------------------------------------
 # Update Checker
@@ -260,7 +234,6 @@ class UpdateChecker:
         except Exception:
             return None
 
-
 # -------------------------------------------------------------------------
 # Config Manager (uses DB)
 # -------------------------------------------------------------------------
@@ -288,7 +261,6 @@ class Config:
 
     def __setitem__(self, key, value):
         self.db.set_config(key, str(value))
-
 
 # -------------------------------------------------------------------------
 # Roblox API
@@ -331,7 +303,6 @@ class RobloxAPI:
             "username": data.get("name", "Unknown"),
             "created": data.get("created", "Unknown")
         }
-
 
 # -------------------------------------------------------------------------
 # Discord Notifier
@@ -385,7 +356,6 @@ class DiscordNotifier:
         color = 0xff0000 if status == "DOWN" else 0x00ff00
         fields = [{"name": "Duration", "value": f"{duration:.1f}s", "inline": False}] if duration else []
         self.embed(f"Roblox API {status}", color, fields)
-
 
 # -------------------------------------------------------------------------
 # Worker Thread
@@ -486,7 +456,6 @@ class MonitorWorker(QThread):
             time.sleep(1)
         self.timer_signal.emit("Next check: —")
 
-
 # -------------------------------------------------------------------------
 # Config Editor
 # -------------------------------------------------------------------------
@@ -530,13 +499,11 @@ class ConfigEditor(QDialog):
         if self.callback:
             self.callback()
 
-
 # -------------------------------------------------------------------------
-# UI & Main Window
+# UI & Main Window (No Theme)
 # -------------------------------------------------------------------------
-def _styled_label(text: str, color_key: str, bold: bool = False) -> QLabel:
+def _styled_label(text: str, bold: bool = False) -> QLabel:
     lbl = QLabel(text)
-    lbl.setStyleSheet(f"color: {THEME[color_key]};")
     font = lbl.font()
     font.setFamily("Segoe UI")
     font.setPointSize(9)
@@ -544,15 +511,6 @@ def _styled_label(text: str, color_key: str, bold: bool = False) -> QLabel:
         font.setBold(True)
     lbl.setFont(font)
     return lbl
-
-
-def _apply_theme(widget: QWidget):
-    pal = widget.palette()
-    pal.setColor(QPalette.Window, QColor(THEME["bg_main"]))
-    pal.setColor(QPalette.Base, QColor(THEME["bg_log"]))
-    pal.setColor(QPalette.WindowText, QColor(THEME["fg_primary"]))
-    pal.setColor(QPalette.Text, QColor(THEME["fg_primary"]))
-    widget.setPalette(pal)
 
 
 class MainWindow(QMainWindow):
@@ -572,7 +530,6 @@ class MainWindow(QMainWindow):
         self.log_handler.new_record.connect(self.append_log)
 
         self._setup_ui()
-        self._apply_global_theme()
         self.check_update()
         self.validate_and_start()
 
@@ -587,26 +544,22 @@ class MainWindow(QMainWindow):
         # Header
         header = QFrame()
         header.setFixedHeight(50)
-        header.setStyleSheet(f"background-color: {THEME['bg_header']};")
         hlayout = QHBoxLayout(header)
         title = QLabel("Roblox Monitor")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title.setStyleSheet(f"color: {THEME['fg_success']};")
         hlayout.addWidget(title)
         hlayout.addStretch()
         self.update_label = QLabel("")
-        self.update_label.setStyleSheet(f"color: {THEME['fg_warning']};")
         self.update_label.setOpenExternalLinks(True)
         hlayout.addWidget(self.update_label)
         layout.addWidget(header)
 
         # Status
         status_frame = QFrame()
-        status_frame.setStyleSheet(f"background-color: {THEME['bg_status']};")
         slayout = QHBoxLayout(status_frame)
-        self.status_label = _styled_label("Status: Idle", "fg_success")
-        self.api_label = _styled_label("API: —", "fg_success")
-        self.timer_label = _styled_label("Next check: —", "fg_timer")
+        self.status_label = _styled_label("Status: Idle")
+        self.api_label = _styled_label("API: —")
+        self.timer_label = _styled_label("Next check: —")
         slayout.addWidget(self.status_label)
         slayout.addWidget(self.api_label)
         slayout.addStretch()
@@ -616,9 +569,9 @@ class MainWindow(QMainWindow):
         # Stats
         stats_frame = QFrame()
         stats_layout = QHBoxLayout(stats_frame)
-        self.robux_label = _styled_label("Robux: —", "fg_success", bold=True)
+        self.robux_label = _styled_label("Robux: —", bold=True)
         self.robux_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.sales_label = _styled_label("Sales: —", "fg_sales", bold=True)
+        self.sales_label = _styled_label("Sales: —", bold=True)
         self.sales_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         stats_layout.addWidget(self.robux_label)
         stats_layout.addWidget(self.sales_label)
@@ -640,7 +593,7 @@ class MainWindow(QMainWindow):
         # Log
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet(f"background-color: {THEME['bg_log']}; font-family: Consolas; font-size: 9pt;")
+        self.log_text.setFont(QFont("Consolas", 9))
         layout.addWidget(self.log_text)
 
         # Logging
@@ -649,19 +602,12 @@ class MainWindow(QMainWindow):
         log.setLevel(logging.INFO)
         log.addHandler(self.log_handler)
 
-    def _apply_global_theme(self):
-        _apply_theme(self)
-        pal = self.log_text.palette()
-        pal.setColor(QPalette.Text, QColor(THEME["fg_primary"]))
-        pal.setColor(QPalette.Base, QColor(THEME["bg_log"]))
-        self.log_text.setPalette(pal)
-
     def check_update(self):
         update = UpdateChecker.check()
         if update:
             latest, url = update
             self.update_label.setText(
-                f'<a href="{url}" style="color:{THEME["link"]};">Update: {latest} → Download</a>'
+                f'<a href="{url}">Update: {latest} → Download</a>'
             )
 
     def validate_and_start(self):
