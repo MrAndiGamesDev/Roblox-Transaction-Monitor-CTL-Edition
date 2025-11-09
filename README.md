@@ -14,9 +14,9 @@ Real-time CLI tool that tracks Robux balance and transaction changes, pushing Di
 - [x] Package as a single portable executable
 
 ## Quick Start
-- 1. Pause antivirus briefly
-- 2. Download & launch the App
-- 3. Resume antivirus after setup
+1. Pause antivirus briefly
+2. Download & launch the App
+3. Resume antivirus after setup
 
 ## Completed Tasks
 - Time-range filters (day / month / year / total)
