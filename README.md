@@ -1,4 +1,4 @@
-# Roblox Transaction Monitor (CTL UI Edition)
+# Roblox Transaction Monitor (CTL Edition)
 Real-time CLI tool that tracks Robux balance and transaction changes, pushing Discord alerts whenever your Roblox economy shifts.
 
 ## Core Features

@@ -604,7 +604,7 @@ class MainWindow(QMainWindow):
             self.update_url = url
             self.update_btn.setText(f"Update: {latest}")
         else:
-            self.update_btn.setText("Check Update")
+            self.update_btn.setText("Check For Update")
             self.update_url = None
 
     def open_update_url(self):
