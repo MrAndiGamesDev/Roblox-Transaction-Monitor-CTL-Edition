@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
         self.worker: Optional[MonitorWorker] = None
         self.log_handler = GUILogHandler()
         self.log_handler.new_record.connect(self.append_log)
-        self.appicon.set_app_icon("Robux")
+        self.appicon.set_app_icon("Robux", custom_path="src/")
         self._setup_ui()
         self.check_update()
         self.validate_and_start()

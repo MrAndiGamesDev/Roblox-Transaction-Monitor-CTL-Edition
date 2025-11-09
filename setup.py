@@ -85,7 +85,7 @@ class PyInstallerBuilder:
         return name
 
     def _get_icon_path(self) -> str:
-        return "Robux.ico"
+        return "src/Robux.ico"
 
     def _collect_submodules(self) -> str:
         return "Roblox-Transaction-Monitor/"
