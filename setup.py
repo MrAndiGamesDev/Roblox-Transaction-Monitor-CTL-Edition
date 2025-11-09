@@ -247,7 +247,7 @@ class Launcher:
                 "name": "--target-script",
                 "kwargs": {
                     "nargs": "?",
-                    "default": "main.py",
+                    "default": "src/main.py",
                     "help": "Python script to build (default: main.py)",
                 },
             },
