@@ -3,4 +3,4 @@ Pyinstaller
 psutil
 requests
 pywin32
-ttkbootstrap
+PyQt5
