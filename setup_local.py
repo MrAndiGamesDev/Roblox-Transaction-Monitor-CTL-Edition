@@ -102,7 +102,6 @@ class VirtualEnvManager:
                 return False
 
         logger.info("Virtual environment detected. Proceeding with package installation...")
-
         if not self.upgrade_pip():
             return False
 

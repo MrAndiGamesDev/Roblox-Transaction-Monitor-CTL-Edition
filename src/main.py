@@ -15,7 +15,7 @@ import webbrowser
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -24,14 +24,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QThread, pyqtSignal, QObject, pyqtSlot
 from PyQt5.QtGui import QFont, QTextCursor
-from Core.Icon_manager import GetAppIcon
+from Core.Icon_manager import AddAppIcon
 
 # -------------------------------------------------------------------------
 # Paths & SQLite DB
 # -------------------------------------------------------------------------
 class Paths:
     APP_DIR = Path.home() / ".roblox_transaction_monitor"
-    CONFIG_FILE = APP_DIR / "config.json"  # Legacy fallback
     DB_FILE = APP_DIR / "monitor.db"
 
     @classmethod
@@ -244,6 +243,8 @@ class Config:
         "CHECK_INTERVAL": "60",
         "TOTAL_CHECKS_TYPE": "Day",
     }
+
+    AppTitle = "Roblox Transaction & Robux Monitor History"
 
     def __init__(self, db: Database):
         self.db = db
@@ -461,9 +462,10 @@ class MonitorWorker(QThread):
 class ConfigEditor(QDialog):
     def __init__(self, parent, config: Config, callback=None):
         super().__init__(parent)
+        self.parent = parent
         self.config = config
         self.callback = callback
-        self.setWindowTitle("Edit Configuration")
+        self.setWindowTitle(f"{self.config.AppTitle} Edit Configuration ({self.parent.updatechecker.get_current_version()})")
         self.setFixedSize(520, 420)
         self.setModal(True)
         layout = QFormLayout(self)
@@ -513,7 +515,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         Paths.ensure_dirs()
         self.db = Database(Paths.DB_FILE)
-        self.appicon = GetAppIcon()
+        self.updatechecker = UpdateChecker()
+        self.appicon = AddAppIcon()
+        self.appicon.set_app_icon(custom_path="src/Icons", name="Robux.ico")
         self.config = Config(self.db)
         self.api = RobloxAPI(self.config["ROBLOSECURITY"])
         self.notifier = DiscordNotifier(
@@ -524,13 +528,12 @@ class MainWindow(QMainWindow):
         self.worker: Optional[MonitorWorker] = None
         self.log_handler = GUILogHandler()
         self.log_handler.new_record.connect(self.append_log)
-        self.appicon.set_app_icon("Robux")
         self._setup_ui()
         self.check_update()
         self.validate_and_start()
 
     def _setup_ui(self):
-        self.setWindowTitle("Roblox Transaction & Robux Monitor (SQLite + PyQt)")
+        self.setWindowTitle(f"{self.config.AppTitle} ({self.updatechecker.get_current_version()})")
         self.setGeometry(100, 100, 820, 620)
         central = QWidget()
         self.setCentralWidget(central)

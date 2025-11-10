@@ -84,8 +84,17 @@ class PyInstallerBuilder:
         self.logger.Log("debug", f"Executable name determined: {name}")
         return name
 
+    def _get_source_path(self) -> str:
+        return "src/"
+
     def _get_icon_path(self) -> str:
-        return "Robux.ico"
+        return f"{self._get_source_path()}Icons/Robux.ico"
+
+    def _get_version_path(self) -> str:
+        return f"{self._get_source_path()}VERSION"
+
+    def _get_app_type(self) -> str:
+        return "--onedir"
 
     def _collect_submodules(self) -> str:
         return "Roblox-Transaction-Monitor/"
@@ -95,13 +104,14 @@ class PyInstallerBuilder:
             str(self.script_file),
             "--noconfirm",
             "--noconsole",
-            "--onefile",
+            f"{self._get_app_type()}",
             "--clean",
             f"--icon={self._get_icon_path()}",
             f"--name={self._get_executable_name()}",
             f"--optimize={self.config.optimization_lvl}",
             f"--add-data={self._get_icon_path()};.",
-            f"--add-data=VERSION;.",
+            f"--add-data={self._get_version_path()};.",
+            f"--add-data={self._get_source_path()};.",
             f"--collect-submodules={self._collect_submodules()}",
             "--log-level=WARN",
         ]
@@ -149,7 +159,7 @@ class PyInstallerBuilder:
             except Exception as exc:
                 self.logger.Log("warning", f"Failed to remove '{path}': {exc}")
                 return
-
+                
         self.logger.Log("error", f"Could not remove '{path}' after 3 attempts.")
 
     def _remove_file(self, file_path: Path) -> bool:
