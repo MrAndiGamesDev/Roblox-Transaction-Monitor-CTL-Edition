@@ -12,7 +12,7 @@ class GetAppIcon:
     _cache = {}  # Class-level cache: filename (str) -> QIcon
 
     @classmethod
-    def set_app_icon(cls, name: str = "Robux.ico", custom_path: Optional[str | Path] = None) -> bool:
+    def set_app_icon(cls, custom_path: Optional[str | Path] = None, name: str = "Robux.ico") -> bool:
         """
         Set the QApplication window icon.
 
@@ -25,7 +25,7 @@ class GetAppIcon:
         Returns:
             bool: True if the icon was found and applied, False otherwise.
         """
-        icon = cls._get_icon(name, custom_path)
+        icon = cls._get_icon(custom_path, name)
         if icon is None or icon.isNull():
             return False
 
@@ -37,7 +37,7 @@ class GetAppIcon:
         return True
 
     @classmethod
-    def _get_icon(cls, name: str, custom_path: Optional[str | Path]) -> Optional[QIcon]:
+    def _get_icon(cls, custom_path: Optional[str | Path], name: str) -> Optional[QIcon]:
         """
         Retrieve a QIcon from cache or file system using pathlib.
 
@@ -75,7 +75,7 @@ class GetAppIcon:
         return icon
 
     @classmethod
-    def _resolve_path(cls, name: str, custom_path: Optional[str | Path]) -> Optional[Path]:
+    def _resolve_path(cls, name: str, custom_path: Optional[str | Path] = None) -> Optional[Path]:
         """
         Resolve the full path to the icon file using pathlib.
         """
