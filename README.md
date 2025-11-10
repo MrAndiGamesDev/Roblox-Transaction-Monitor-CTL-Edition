@@ -12,6 +12,7 @@ Real-time CLI tool that tracks Robux balance and transaction changes, pushing Di
 ## TODO
 - [x] Add time-range filters (day / month / year / total)
 - [x] Package as a single portable executable
+- [ ] Add an installer gui (WiX) / (NSIS) (INNO Setup)
 
 ## Quick Start
 1. Pause antivirus briefly

@@ -3,7 +3,7 @@ from typing import Optional
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication
 
-class GetAppIcon:
+class AddAppIcon:
     """
     A utility class for managing and setting the application icon in a PyQt5 application.
     Uses pathlib for robust, modern path handling with in-memory caching.
@@ -54,7 +54,7 @@ class GetAppIcon:
             return cls._cache[name]
 
         # Resolve candidate path
-        candidate_path = cls._resolve_path(name, custom_path)
+        candidate_path = cls._resolve_path(custom_path, name)
 
         if not candidate_path or not candidate_path.is_file():
             fallback_path = Path.cwd() / name
@@ -75,7 +75,7 @@ class GetAppIcon:
         return icon
 
     @classmethod
-    def _resolve_path(cls, name: str, custom_path: Optional[str | Path] = None) -> Optional[Path]:
+    def _resolve_path(cls, custom_path: Optional[str | Path] = None, name: str = "Robux.ico") -> Optional[Path]:
         """
         Resolve the full path to the icon file using pathlib.
         """
