@@ -2,8 +2,10 @@ function Install-PythonFromStore {
     try {
         $wingetArgs = @(
             'install',
-            '--id', '9NRWMJP3717K',
-            '--version', '3.13',
+            '--id',
+            '9NRWMJP3717K',
+            '--version',
+            '3.13',
             '--accept-package-agreements',
             '--accept-source-agreements'
         )
