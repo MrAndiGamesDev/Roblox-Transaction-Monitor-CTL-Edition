@@ -94,7 +94,7 @@ class PyInstallerBuilder:
         return f"{self._get_source_path()}VERSION"
 
     def _get_app_type(self) -> str:
-        return "--onedir"
+        return "--onefile"
 
     def _collect_submodules(self) -> str:
         return "Roblox-Transaction-Monitor/"
@@ -112,7 +112,7 @@ class PyInstallerBuilder:
             f"--add-data={self._get_icon_path()};.",
             f"--add-data={self._get_version_path()};.",
             f"--add-data={self._get_source_path()};.",
-            f"--add-data={self._collect_submodules()};.",
+            f"--collect-submodules={self._collect_submodules()}",
             "--log-level=WARN",
         ]
 
