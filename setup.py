@@ -112,7 +112,7 @@ class PyInstallerBuilder:
             f"--add-data={self._get_icon_path()};.",
             f"--add-data={self._get_version_path()};.",
             f"--add-data={self._get_source_path()};.",
-            f"--add-data={self._collect_submodules()}",
+            f"--add-data={self._collect_submodules()};.",
             "--log-level=WARN",
         ]
 
